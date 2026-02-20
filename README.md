@@ -123,40 +123,55 @@ Sunum akışı, olası mülakat soruları ve hazır cevaplar:
 
 | Scenario | Accuracy | Macro F1 | Train Time (s) |
 |---|---:|---:|---:|
-| Real-only | 0.9432 | 0.9432 | 56.72 |
-| Synth-only | 0.8777 | 0.8775 | 23.88 |
-| Real+Synth | 0.9432 | 0.9409 | 81.88 |
+| Real-only (100%) | 0.9476 | 0.9462 | 13.24 |
+| Synth-only (fixed) | 0.9039 | 0.9045 | 7.77 |
+| Real+Synth (100%) | 0.8690 | 0.8650 | 17.61 |
+| Real-only + Classic Aug (100%) | 0.9301 | 0.9303 | 12.71 |
 
 Confusion Matrix (Real-only):
 
 ```text
-[[79  0  5]
- [ 4 76  0]
- [ 4  0 61]]
+[[76  1  7]
+ [ 0 79  1]
+ [ 3  0 62]]
 ```
 
 Confusion Matrix (Synth-only):
 
 ```text
-[[74  0 10]
- [ 9 70  1]
- [ 5  3 57]]
+[[76  0  8]
+ [ 8 69  3]
+ [ 3  0 62]]
 ```
 
 Confusion Matrix (Real+Synth):
 
 ```text
-[[81  2  1]
- [ 0 78  2]
- [ 7  1 57]]
+[[84  0  0]
+ [ 9 70  1]
+ [19  1 45]]
 ```
 
 Kısa yorum:
-- Synthetic-only modelinin `0.8777` accuracy elde etmesi, generator'ın sınıf-ayırt edici örüntüleri öğrendiğini gösterir.
-- Real-only ve Real+Synth aynı seviyede (`0.9432`), yani yeterli real veri varken synthetic eklemek her zaman ek kazanç getirmez.
-- Real-only ile Synth-only arasındaki fark, real ve generated dağılımlar arasındaki mismatch'i işaret eder.
+- Synthetic-only modelinin `0.9039` accuracy elde etmesi, generator'ın sınıf-ayırt edici örüntüleri öğrendiğini gösterir.
+- Bu koşuda `Real+Synth (100%)`, `Real-only (100%)`'den düşük çıkmıştır; synthetic eklemek her zaman kazanç getirmez.
+- Real-only ile Synth-only arasındaki fark, real ve generated dağılımlar arasındaki mismatch ile tutarlıdır.
 
-### B) `smoke` koşusu (hızlı doğrulama)
+### B) Low-data ablation (tam koşu, `amount_vs_accuracy_time.csv`)
+
+| Ratio | Real-only Acc | Real+Synth Acc | Real-only + Aug Acc | Real-only Time (s) | Real+Synth Time (s) |
+|---|---:|---:|---:|---:|---:|
+| 10% | 0.7904 | 0.8297 | 0.7336 | 4.12 | 9.38 |
+| 25% | 0.8515 | 0.9083 | 0.7904 | 5.33 | 10.44 |
+| 50% | 0.8821 | 0.8996 | 0.9301 | 7.05 | 11.56 |
+| 100% | 0.9476 | 0.8690 | 0.9301 | 13.24 | 17.61 |
+
+Kısa yorum:
+- `10%` ve `25%` real veri koşullarında `Real+Synth`, `Real-only`'yi belirgin şekilde geçti.
+- `50%` seviyesinde klasik augmentation (`0.9301`) en iyi sonucu verdi.
+- `100%` seviyesinde en iyi sonuç `Real-only` (`0.9476`) oldu.
+
+### C) `smoke` koşusu (hızlı doğrulama)
 
 Kaynak: `runs_classifier/smoke.csv`
 
@@ -176,7 +191,7 @@ Kısa yorum:
 - Yüksek frekans detaylarında gürültü/artifact görülür (sınırlı veri boyutu + `32x32` etkisi).
 - Çeşitlilik makul seviyededir; belirgin bir mode collapse gözlenmemiştir.
 
-### C) Rapor için önerilen çıkarım
+### E) Rapor için önerilen çıkarım
 
 1. GAN verisi, real verinin yerine geçmez.
 2. GAN verisi, real veri az olduğunda daha faydalıdır.

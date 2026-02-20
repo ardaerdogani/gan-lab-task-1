@@ -1,0 +1,14 @@
+ratio,scenario,augmentation,accuracy,macro_f1,train_time_s
+fixed,synth_only,no,0.9039,0.9045,7.77
+10%,real_only,no,0.7904,0.7871,4.12
+10%,real_plus_synth,no,0.8297,0.8297,9.38
+10%,real_only,yes,0.7336,0.7277,4.43
+25%,real_only,no,0.8515,0.836,5.33
+25%,real_plus_synth,no,0.9083,0.9079,10.44
+25%,real_only,yes,0.7904,0.7817,4.62
+50%,real_only,no,0.8821,0.879,7.05
+50%,real_plus_synth,no,0.8996,0.8992,11.56
+50%,real_only,yes,0.9301,0.9274,7.52
+100%,real_only,no,0.9476,0.9462,13.24
+100%,real_plus_synth,no,0.869,0.865,17.61
+100%,real_only,yes,0.9301,0.9303,12.71

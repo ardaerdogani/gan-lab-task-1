@@ -65,13 +65,13 @@ Alternatif cümle:
 
 | Scenario | Accuracy |
 |---|---|
-| Real-only | 94.3% |
-| Synth-only | 87.7% |
-| Real+Synth | 94.3% |
+| Real-only (100%) | 94.8% |
+| Synth-only (fixed) | 90.4% |
+| Real+Synth (100%) | 86.9% |
 
 Detay metrik (istersen ek satır):
-- Macro F1: `0.9432 / 0.8775 / 0.9409`
-- Train time (s): `56.72 / 23.88 / 81.88`
+- Macro F1: `0.9462 / 0.9045 / 0.8650`
+- Train time (s): `13.24 / 7.77 / 17.61`
 
 ### Slide 6 — Low Data Analysis
 
@@ -83,12 +83,17 @@ Hazır cümle:
 
 > Synthetic data shows stronger impact in low-data regimes.
 
+Bu koşudan sayısal örnek:
+- `%10`: Real-only `0.7904` -> Real+Synth `0.8297`
+- `%25`: Real-only `0.8515` -> Real+Synth `0.9083`
+- `%50`: Real-only+Aug `0.9301` (bu noktada en iyi)
+
 ### Slide 7 — Computational Time
 
 Örnek süreler:
-- Real-only: 56s
-- Synth-only: 23s
-- Real+Synth: 81s
+- Real-only (100%): 13.24s
+- Synth-only: 7.77s
+- Real+Synth (100%): 17.61s
 
 Hazır cümle:
 
@@ -120,7 +125,7 @@ Hazır cümle:
 
 ### Why didn’t Real+Synth improve accuracy?
 
-> When sufficient real data is available, synthetic data does not add significant new information. Its benefit is more visible in low-data regimes.
+> In this run, synthetic data improved performance at 10-25% real data, but hurt at 100% real data. This suggests synthetic samples are most helpful in low-data regimes and may introduce distribution mismatch when real data is already sufficient.
 
 ### What are GAN weaknesses?
 
