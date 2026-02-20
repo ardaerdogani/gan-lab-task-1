@@ -10,6 +10,7 @@ Ek not:
 - Dataset: Apple, Orange, Banana
 - Resolution: 32x32
 - Yaklaşık 1000 real image
+- Dataset hafif dengesiz, ancak dengesizlik şiddetli değil.
 
 ### Slide 2 — Method Overview
 
@@ -20,6 +21,10 @@ Real data
 -> Generate synthetic data  
 -> Train classifier under multiple scenarios  
 -> Compare accuracy + time
+
+Ek metod notu:
+- Preprocessing ortak utility modülünde merkezileştirildi (`utils.py`) ve tüm deneylerde tutarlı kullanıldı.
+- Synthetic dataset class-balanced üretildi.
 
 ### Slide 3 — GAN Architecture
 
@@ -35,6 +40,11 @@ Hazır cümle:
 
 > We used a Conditional DCGAN to incorporate class information into both generator and discriminator.
 
+`32x32` seçiminin amacı (slayta direkt koy):
+- GAN eğitimini daha stabil yapmak (mode collapse riskini azaltmak)
+- Daha hızlı deney döngüsü
+- Aynı compute ile daha fazla ablation koşusu çalıştırmak
+
 ### Slide 4 — GAN Evaluation
 
 Gösterilecek:
@@ -47,6 +57,10 @@ Hazır cümle:
 
 > The generator captures coarse class-level structure but lacks high-frequency detail.
 
+Alternatif cümle:
+
+> The generator produces visually coherent fruits with class consistency. Some minor artifacts exist due to limited data and low resolution.
+
 ### Slide 5 — Classification Scenarios
 
 | Scenario | Accuracy |
@@ -54,6 +68,10 @@ Hazır cümle:
 | Real-only | 94.3% |
 | Synth-only | 87.7% |
 | Real+Synth | 94.3% |
+
+Detay metrik (istersen ek satır):
+- Macro F1: `0.9432 / 0.8775 / 0.9409`
+- Train time (s): `56.72 / 23.88 / 81.88`
 
 ### Slide 6 — Low Data Analysis
 
