@@ -1,4 +1,0 @@
-ratio,scenario,augmentation,accuracy,macro_f1,train_time_s
-fixed,synth_only,no,0.4105,0.3654,1.34
-10%,real_only,no,0.3668,0.1789,0.32
-10%,real_plus_synth,no,0.5371,0.5166,1.47

@@ -1,3 +1,20 @@
 /.DS_Store
 /.venv
 /.vscode
+
+# Python cache/artifacts
+/__pycache__/
+*.py[cod]
+/.mplconfig/
+
+# Generated experiment outputs
+/logs/
+/runs_gan/
+/runs_classifier/
+/reports/figures/
+
+# Generated/large data folders
+/data/archive/
+/data/raw/
+/data/split/
+/data/synthetic/
