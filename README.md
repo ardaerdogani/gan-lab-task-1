@@ -1,198 +1,66 @@
 # GAN Lab
 
-Bu repo, meyve sınıfları (`apple`, `orange`, `banana`) için:
-- veri split
-- conditional GAN eğitimi
-- sentetik veri üretimi
-- classifier deneyleri (real/synth/mixed + low-data analizi)
-akışını içerir.
+This repository implements **Task 1** end-to-end for fruit image generation and classification (`apple`, `banana`, `orange`):
 
-Teknik notlar:
-- Preprocessing adımları ortak `utils.py` içinde merkezileştirildi; GAN ve classifier tarafında tutarlı giriş dağılımı sağlandı.
-- Dataset hafif dengesizdir, ancak dengesizlik şiddetli değildir.
-- Synthetic üretim class-balanced yapıldı; hedef, dengelemenin classifier genellemesine etkisini ölçmektir.
+1. Train a Conditional GAN from scratch (no transfer learning).
+2. Generate synthetic class-conditional images.
+3. Train/evaluate a classifier under multiple training scenarios.
+4. Analyze accuracy/F1/time trade-offs across different real-data ratios.
 
-## Ortam
+## Current Project Status
 
-Önerilen interpreter:
+Validated reference run is the **CPU balanced run**:
+- Log: `logs/06_classifier_balanced_cpu.log`
+- CSV: `runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv`
 
-```bash
-/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python
-```
+Best observed overall configuration in this run:
+- `Real+Synth (100%)`: **Accuracy 0.9928**, **Macro F1 0.9723**, **Train Time 595.38s**
 
-Aktifleştirme:
+Low-data highlight:
+- At `10%` real data, `Real+Synth` outperforms `Real-only`:
+  - Accuracy: `0.9759` vs `0.9635`
+  - Macro F1: `0.9383` vs `0.9126`
 
-```bash
-source /Users/ardaerdogan/Desktop/gan-lab/.venv/bin/activate
-```
+Historical comparison availability:
+- A documented v1 (smaller dataset) vs v2 (expanded dataset) comparison is included in:
+  - `FINAL_REPORT_TASK1.md`
+  - `RESULTS_NOTES.md`
 
-Not:
-- Kod Apple Silicon için `mps` cihazını otomatik seçer (varsa).
-- `train_classifier.py` için `--num-workers -1` varsayılanı otomatik worker seçimi yapar.
+## Repository Layout
 
-## 1) Dataset Split
+- `train_gan.py`: Conditional GAN training
+- `generate_synthetic.py`: Synthetic image generation from GAN checkpoint
+- `train_classifier.py`: Classifier experiments (real/synth/mixed/aug + ratio analysis)
+- `split_dataset.py`: Train/val/test split creation from raw data
+- `utils.py`: Shared transforms/device helpers
+- `data/`: raw/split/synthetic data folders
+- `runs_gan/`: GAN checkpoints and sample grids
+- `runs_classifier/`: classifier result CSV files
+- `logs/`: run logs
 
-Ham veri yapısı:
+## Documentation Index
 
-```text
-data/raw/apples
-data/raw/oranges
-data/raw/bananas
-```
+- `RUNBOOK_TERMINAL.md`: Commands to run the full pipeline from scratch
+- `RESULTS_NOTES.md`: Compact metrics and comparison notes
+- `PRESENTATION_PREP.md`: Slide structure and talking points
+- `FINAL_REPORT_TASK1.md`: Full structured report for the assignment
+- `scripts/generate_report_figures.py`: Generates report-ready comparison charts
+- `reports/figures/`: Output charts used by the final report
 
-Split üretimi:
+## Reproducibility Notes
 
-```bash
-python split_dataset.py
-```
+- Use the virtual environment in `.venv`.
+- For stable classifier evaluation, use CPU explicitly:
+  - `FORCE_DEVICE=cpu`
+- `train_classifier.py` uses class balancing by default (weighted sampler + class-weighted loss).
+- Disable balancing baseline with:
+  - `--disable-balancing`
 
-Çıkış:
+## Git Notes
 
-```text
-data/split/train/{apple,orange,banana}
-data/split/val/{apple,orange,banana}
-data/split/test/{apple,orange,banana}
-```
+- Generated data and run artifacts are ignored to keep commits clean.
+- See `RUNBOOK_TERMINAL.md` section `Git Commit Hygiene` for one-time cleanup and normal commit flow.
 
-## 2) GAN Eğitimi
+## Quick Start
 
-```bash
-python train_gan.py
-```
-
-Neden `32x32`?
-- GAN eğitimini daha stabil hale getirir (mode collapse riski azalır).
-- Düşük çözünürlükle deneyler daha hızlı tamamlanır.
-- Aynı compute bütçesiyle daha fazla senaryo çalıştırıp `data size vs accuracy vs time` analizi yapılır.
-
-Çıkışlar:
-- checkpoint: `runs_gan/ckpt_epoch_XXX.pt`
-- örnek görseller: `runs_gan/samples_epoch_XXX.png`
-
-## 3) Sentetik Veri Üretimi
-
-`generate_synthetic.py` içindeki `CKPT_PATH` ve `NUM_PER_CLASS` değerlerini gerekirse güncelle:
-- `CKPT_PATH = runs_gan/ckpt_epoch_090.pt`
-- `NUM_PER_CLASS = 400`
-
-Çalıştır:
-
-```bash
-python generate_synthetic.py
-```
-
-Çıkış:
-
-```text
-data/synthetic/apple
-data/synthetic/orange
-data/synthetic/banana
-```
-
-## 4) Classifier Deneyleri
-
-Tam deney (real/synth/mixed + low-data + opsiyonel classic aug):
-
-```bash
-python train_classifier.py --epochs 20 --ratios 0.1 0.25 0.5 1.0 --out-csv runs_classifier/amount_vs_accuracy_time.csv
-```
-
-Classic augmentation senaryosunu kapatmak için:
-
-```bash
-python train_classifier.py --skip-aug
-```
-
-Kısa smoke run:
-
-```bash
-python train_classifier.py --epochs 1 --ratios 0.1 --skip-aug --batch-size 128 --out-csv runs_classifier/smoke.csv
-```
-
-Çıktı tablo dosyası:
-- `runs_classifier/amount_vs_accuracy_time.csv`
-
-## Sunum Hazırlığı
-
-Sunum akışı, olası mülakat soruları ve hazır cevaplar:
-- `PRESENTATION_PREP.md`
-
-## 5) Sonuçlar ve Yorum
-
-### A) Notlanan ana sonuçlar (tam koşu)
-
-| Scenario | Accuracy | Macro F1 | Train Time (s) |
-|---|---:|---:|---:|
-| Real-only (100%) | 0.9476 | 0.9462 | 13.24 |
-| Synth-only (fixed) | 0.9039 | 0.9045 | 7.77 |
-| Real+Synth (100%) | 0.8690 | 0.8650 | 17.61 |
-| Real-only + Classic Aug (100%) | 0.9301 | 0.9303 | 12.71 |
-
-Confusion Matrix (Real-only):
-
-```text
-[[76  1  7]
- [ 0 79  1]
- [ 3  0 62]]
-```
-
-Confusion Matrix (Synth-only):
-
-```text
-[[76  0  8]
- [ 8 69  3]
- [ 3  0 62]]
-```
-
-Confusion Matrix (Real+Synth):
-
-```text
-[[84  0  0]
- [ 9 70  1]
- [19  1 45]]
-```
-
-Kısa yorum:
-- Synthetic-only modelinin `0.9039` accuracy elde etmesi, generator'ın sınıf-ayırt edici örüntüleri öğrendiğini gösterir.
-- Bu koşuda `Real+Synth (100%)`, `Real-only (100%)`'den düşük çıkmıştır; synthetic eklemek her zaman kazanç getirmez.
-- Real-only ile Synth-only arasındaki fark, real ve generated dağılımlar arasındaki mismatch ile tutarlıdır.
-
-### B) Low-data ablation (tam koşu, `amount_vs_accuracy_time.csv`)
-
-| Ratio | Real-only Acc | Real+Synth Acc | Real-only + Aug Acc | Real-only Time (s) | Real+Synth Time (s) |
-|---|---:|---:|---:|---:|---:|
-| 10% | 0.7904 | 0.8297 | 0.7336 | 4.12 | 9.38 |
-| 25% | 0.8515 | 0.9083 | 0.7904 | 5.33 | 10.44 |
-| 50% | 0.8821 | 0.8996 | 0.9301 | 7.05 | 11.56 |
-| 100% | 0.9476 | 0.8690 | 0.9301 | 13.24 | 17.61 |
-
-Kısa yorum:
-- `10%` ve `25%` real veri koşullarında `Real+Synth`, `Real-only`'yi belirgin şekilde geçti.
-- `50%` seviyesinde klasik augmentation (`0.9301`) en iyi sonucu verdi.
-- `100%` seviyesinde en iyi sonuç `Real-only` (`0.9476`) oldu.
-
-### C) `smoke` koşusu (hızlı doğrulama)
-
-Kaynak: `runs_classifier/smoke.csv`
-
-| Ratio | Scenario | Aug | Accuracy | Macro F1 | Train Time (s) |
-|---|---|---|---|---|---|
-| fixed | synth_only | no | 0.4105 | 0.3654 | 1.34 |
-| 10% | real_only | no | 0.3668 | 0.1789 | 0.32 |
-| 10% | real_plus_synth | no | 0.5371 | 0.5166 | 1.47 |
-
-Kısa yorum:
-- Low-data rejiminde (`%10 real`) `real_plus_synth`, `real_only`'den belirgin daha iyi.
-- Synthetic veri özellikle veri az olduğunda yardımcı olabilir; bu bulgu task’in ana hipoteziyle uyumludur.
-
-### D) GAN görsel kalite özeti
-
-- Generator, renk ve genel şekil gibi coarse class-level özellikleri başarılı şekilde yakalar.
-- Yüksek frekans detaylarında gürültü/artifact görülür (sınırlı veri boyutu + `32x32` etkisi).
-- Çeşitlilik makul seviyededir; belirgin bir mode collapse gözlenmemiştir.
-
-### E) Rapor için önerilen çıkarım
-
-1. GAN verisi, real verinin yerine geçmez.
-2. GAN verisi, real veri az olduğunda daha faydalıdır.
-3. Synthetic eklemek eğitimi uzatır, bu yüzden accuracy-time dengesi raporlanmalıdır.
+See `RUNBOOK_TERMINAL.md` for exact commands and artifact paths.

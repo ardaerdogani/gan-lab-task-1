@@ -12,6 +12,18 @@ def get_transform(img_size=32):
 
 
 def get_best_device():
+    forced = os.environ.get("FORCE_DEVICE", "").strip().lower()
+    if forced == "cpu":
+        return torch.device("cpu")
+    if forced == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        print("[WARN] FORCE_DEVICE=cuda verildi ama CUDA mevcut degil. Auto secime donuluyor.")
+    if forced == "mps":
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        print("[WARN] FORCE_DEVICE=mps verildi ama MPS mevcut degil. Auto secime donuluyor.")
+
     if torch.cuda.is_available():
         return torch.device("cuda")
     if torch.backends.mps.is_available():

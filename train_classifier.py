@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-from torch.utils.data import ConcatDataset, DataLoader, Subset
+from torch.utils.data import ConcatDataset, DataLoader, Subset, WeightedRandomSampler
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
@@ -97,20 +97,50 @@ def make_stratified_subset(dataset, ratio, seed):
     return Subset(dataset, selected)
 
 
-def make_loader(dataset, batch_size, shuffle, num_workers, device):
+def extract_targets(dataset):
+    if isinstance(dataset, Subset):
+        base_targets = np.array(extract_targets(dataset.dataset))
+        return base_targets[np.array(dataset.indices)]
+
+    if isinstance(dataset, ConcatDataset):
+        parts = [np.array(extract_targets(ds)) for ds in dataset.datasets]
+        return np.concatenate(parts) if parts else np.array([], dtype=np.int64)
+
+    if hasattr(dataset, "targets"):
+        return np.array(dataset.targets)
+
+    raise TypeError(f"Unsupported dataset type for target extraction: {type(dataset)}")
+
+
+def build_balancing_weights(dataset, num_classes):
+    targets = extract_targets(dataset).astype(np.int64)
+    if len(targets) == 0:
+        raise ValueError("Balancing icin train dataset bos olamaz.")
+
+    class_counts = np.bincount(targets, minlength=num_classes).astype(np.float64)
+    class_weights = np.zeros(num_classes, dtype=np.float32)
+    nonzero = class_counts > 0
+    class_weights[nonzero] = class_counts.sum() / (class_counts[nonzero] * nonzero.sum())
+
+    sample_weights = class_weights[targets].astype(np.float64)
+    return class_counts.astype(np.int64), class_weights, sample_weights
+
+
+def make_loader(dataset, batch_size, shuffle, num_workers, device, sampler=None):
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle if sampler is None else False,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=should_pin_memory(device),
         persistent_workers=num_workers > 0,
     )
 
 
-def train_one_model(train_loader, epochs, lr, device, num_classes):
+def train_one_model(train_loader, epochs, lr, device, num_classes, class_weights=None):
     model = SimpleCNN(num_classes=num_classes).to(device)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     start_time = time.time()
@@ -149,14 +179,42 @@ def evaluate(model, test_loader, device):
     return acc, f1, cm
 
 
-def run_experiment(name, train_dataset, test_loader, epochs, lr, batch_size, num_workers, device, num_classes):
+def run_experiment(
+    name,
+    train_dataset,
+    test_loader,
+    epochs,
+    lr,
+    batch_size,
+    num_workers,
+    device,
+    num_classes,
+    use_balancing,
+):
     print(f"\n===== {name} =====")
+    sampler = None
+    class_weights_tensor = None
+    if use_balancing:
+        class_counts, class_weights_np, sample_weights_np = build_balancing_weights(train_dataset, num_classes)
+        sampler = WeightedRandomSampler(
+            weights=torch.as_tensor(sample_weights_np, dtype=torch.double),
+            num_samples=len(sample_weights_np),
+            replacement=True,
+        )
+        class_weights_tensor = torch.as_tensor(class_weights_np, dtype=torch.float32, device=device)
+        print("Balancing: on")
+        print("Train class counts:", class_counts.tolist())
+        print("Class weights:", [round(float(w), 4) for w in class_weights_np.tolist()])
+    else:
+        print("Balancing: off")
+
     train_loader = make_loader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         device=device,
+        sampler=sampler,
     )
 
     model, train_time = train_one_model(
@@ -165,6 +223,7 @@ def run_experiment(name, train_dataset, test_loader, epochs, lr, batch_size, num
         lr=lr,
         device=device,
         num_classes=num_classes,
+        class_weights=class_weights_tensor,
     )
     acc, f1, cm = evaluate(model, test_loader, device)
     print("Accuracy:", round(acc, 4))
@@ -193,6 +252,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ratios", type=float, nargs="+", default=[0.10, 0.25, 0.50, 1.00])
     parser.add_argument("--skip-aug", action="store_true", help="Skip optional classic augmentation scenario")
+    parser.add_argument("--disable-balancing", action="store_true", help="Disable weighted sampler + class-weighted loss")
     parser.add_argument("--out-csv", type=str, default="runs_classifier/amount_vs_accuracy_time.csv")
     args = parser.parse_args()
 
@@ -222,6 +282,7 @@ def main():
     print("class_to_idx:", real_train_plain.class_to_idx)
     print("Ratios:", args.ratios)
     print("num_workers:", num_workers)
+    print("balancing:", "off" if args.disable_balancing else "on")
 
     rows = []
 
@@ -235,6 +296,7 @@ def main():
         num_workers=num_workers,
         device=device,
         num_classes=num_classes,
+        use_balancing=not args.disable_balancing,
     )
     rows.append(
         {
@@ -263,6 +325,7 @@ def main():
             num_workers=num_workers,
             device=device,
             num_classes=num_classes,
+            use_balancing=not args.disable_balancing,
         )
         rows.append(
             {
@@ -285,6 +348,7 @@ def main():
             num_workers=num_workers,
             device=device,
             num_classes=num_classes,
+            use_balancing=not args.disable_balancing,
         )
         rows.append(
             {
@@ -304,11 +368,12 @@ def main():
                 test_loader=test_loader,
                 epochs=args.epochs,
                 lr=args.lr,
-                    batch_size=args.batch_size,
-                    num_workers=num_workers,
-                    device=device,
-                    num_classes=num_classes,
-                )
+                batch_size=args.batch_size,
+                num_workers=num_workers,
+                device=device,
+                num_classes=num_classes,
+                use_balancing=not args.disable_balancing,
+            )
             rows.append(
                 {
                     "ratio": ratio_tag,
