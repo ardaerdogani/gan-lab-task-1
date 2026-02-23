@@ -8,6 +8,7 @@ This file summarizes the latest reliable experiment outputs for Task 1.
 - Synthetic generation log: `logs/03_generate_synthetic.log`
 - Classifier log (reference): `logs/06_classifier_balanced_cpu.log`
 - Classifier table: `runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv`
+- Count-trend table (professor request): `runs_classifier/task1_amount_trend_counts_cpu.csv`
 
 ## 1) GAN Training and Synthetic Data
 
@@ -108,3 +109,45 @@ Baseline source:
 Interpretation:
 - Expanded dataset + updated training setup produce consistently higher accuracies.
 - This section should be presented as **cross-run comparison**, not strict one-variable ablation.
+
+## 7) Professor-Requested Count Trend (Task 1)
+
+The latest count-based run used real train sample counts:
+- `200`, `400`, `800`, `1600`
+
+Reference CSV:
+- `runs_classifier/task1_amount_trend_counts_cpu.csv`
+
+### 7.1 Main Rows
+
+| Real Train Count | Scenario | Accuracy | Macro F1 | Train Time (s) |
+|---:|---|---:|---:|---:|
+| fixed | Synth-only | 0.9597 | 0.8817 | 66.25 |
+| 200 | Real-only | 0.9030 | 0.7810 | 12.68 |
+| 200 | Real+Synth | 0.9622 | 0.8937 | 82.40 |
+| 400 | Real-only | 0.9446 | 0.8662 | 27.98 |
+| 400 | Real+Synth | 0.9644 | 0.8937 | 90.65 |
+| 800 | Real-only | 0.9324 | 0.8294 | 52.07 |
+| 800 | Real+Synth | 0.9694 | 0.9226 | 115.82 |
+| 1600 | Real-only | 0.9463 | 0.8721 | 138.65 |
+| 1600 | Real+Synth | 0.9761 | 0.9358 | 152.78 |
+
+### 7.2 Trend Takeaway
+
+- Across all tested counts, `Real+Synth` outperformed `Real-only` on both accuracy and macro F1.
+- This directly satisfies the requirement to show trend across more than two data sizes.
+- Plot artifacts:
+  - `reports/figures/accuracy_vs_count.png`
+  - `reports/figures/macrof1_vs_count.png`
+  - `reports/figures/time_vs_count.png`
+
+## 8) Task 2 Required Three-Case Summary
+
+From `runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv` at `100%` real setting:
+- only synthetic
+- only real
+- real + synthetic
+
+Report artifact:
+- `reports/task2_three_case_comparison.md`
+- `reports/figures/task2_three_case_comparison.png`

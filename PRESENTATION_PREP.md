@@ -44,8 +44,8 @@ From `logs/03_generate_synthetic.log`:
 ## Slide 5 - Classification Scenarios
 
 - Synth-only (fixed baseline)
-- Real-only (`10/25/50/100%`)
-- Real+Synth (`10/25/50/100%`)
+- Real-only (`200/400/800/1600` and `10/25/50/100%` views)
+- Real+Synth (`200/400/800/1600` and `10/25/50/100%` views)
 - Real-only + classic augmentation (optional baseline)
 
 All reference metrics are from CPU balanced run:
@@ -65,6 +65,12 @@ Low-data gains of Real+Synth vs Real-only:
 Counterexample:
 - `50%`: Real+Synth underperforms (`-0.0070 Acc`, `-0.0299 F1`)
 
+Professor-requested count trend (new):
+- `200`: Real+Synth `0.9622` vs Real-only `0.9030`
+- `400`: Real+Synth `0.9644` vs Real-only `0.9446`
+- `800`: Real+Synth `0.9694` vs Real-only `0.9324`
+- `1600`: Real+Synth `0.9761` vs Real-only `0.9463`
+
 ## Slide 7 - Time vs Performance
 
 Real+Synth increases training time:
@@ -82,6 +88,12 @@ Message:
 2. Synthetic-only classifier is strong but still below best mixed/real scenarios.
 3. Synthetic data is most helpful in low-data regimes.
 4. Synthetic data is a supplement, not a replacement for real data.
+
+Task 2 framing note (as requested):
+- Show only three classifier cases:
+  - only synthetic
+  - only real
+  - real + synthetic
 
 ## Slide 9 - Historical Baseline vs Expanded Data (Optional but Strong)
 

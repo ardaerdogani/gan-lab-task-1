@@ -5,7 +5,7 @@ This repository implements **Task 1** end-to-end for fruit image generation and 
 1. Train a Conditional GAN from scratch (no transfer learning).
 2. Generate synthetic class-conditional images.
 3. Train/evaluate a classifier under multiple training scenarios.
-4. Analyze accuracy/F1/time trade-offs across different real-data ratios.
+4. Analyze accuracy/F1/time trade-offs across different data amounts.
 
 ## Current Project Status
 
@@ -30,7 +30,7 @@ Historical comparison availability:
 
 - `train_gan.py`: Conditional GAN training
 - `generate_synthetic.py`: Synthetic image generation from GAN checkpoint
-- `train_classifier.py`: Classifier experiments (real/synth/mixed/aug + ratio analysis)
+- `train_classifier.py`: Classifier experiments (real/synth/mixed/aug + ratio/count analysis)
 - `split_dataset.py`: Train/val/test split creation from raw data
 - `utils.py`: Shared transforms/device helpers
 - `data/`: raw/split/synthetic data folders
@@ -45,7 +45,25 @@ Historical comparison availability:
 - `PRESENTATION_PREP.md`: Slide structure and talking points
 - `FINAL_REPORT_TASK1.md`: Full structured report for the assignment
 - `scripts/generate_report_figures.py`: Generates report-ready comparison charts
+- `scripts/generate_count_trend_figures.py`: Generates count-based trend charts (`200/400/800/1600` style)
+- `scripts/compute_fid.py`: Computes FID for GAN output (Task 1 training part)
+- `scripts/run_task1_gan_scale.py`: Automates GAN scaling runs + FID collection by data amount
+- `scripts/generate_task2_three_case_report.py`: Produces Task 2 three-case table/figure (only synth, only real, real+synth)
 - `reports/figures/`: Output charts used by the final report
+
+## Professor Alignment (Task 1 / Task 2)
+
+- Task 1 trend analysis:
+  - Use multiple data amounts (e.g. `200 400 800 1600`) instead of only two dataset sizes.
+  - Classifier trend command:
+    - `FORCE_DEVICE=cpu python train_classifier.py --counts 200 400 800 1600 --skip-aug ...`
+  - GAN-side quality metric:
+    - `python scripts/compute_fid.py ...` (FID for generator output).
+- Task 2 comparison:
+  - Compare exactly three classification cases:
+    - `only synthetic`, `only real`, `real + synthetic`
+  - Generate concise Task 2 artifact:
+    - `python scripts/generate_task2_three_case_report.py ...`
 
 ## Reproducibility Notes
 

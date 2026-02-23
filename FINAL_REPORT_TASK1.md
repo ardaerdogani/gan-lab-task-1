@@ -229,6 +229,29 @@ Change:
 Interpretation:
 - In this run, synthetic data again provided net benefit at full scale.
 
+### 8.5 Count-Based Trend (Professor Requested Format)
+
+To explicitly show trend by data amount (not only percentages), we also ran:
+- Real train counts: `200`, `400`, `800`, `1600`
+- CSV: `runs_classifier/task1_amount_trend_counts_cpu.csv`
+
+| Real Train Count | Scenario | Accuracy | Macro F1 | Train Time (s) |
+|---:|---|---:|---:|---:|
+| fixed | Synth-only | 0.9597 | 0.8817 | 66.25 |
+| 200 | Real-only | 0.9030 | 0.7810 | 12.68 |
+| 200 | Real+Synth | 0.9622 | 0.8937 | 82.40 |
+| 400 | Real-only | 0.9446 | 0.8662 | 27.98 |
+| 400 | Real+Synth | 0.9644 | 0.8937 | 90.65 |
+| 800 | Real-only | 0.9324 | 0.8294 | 52.07 |
+| 800 | Real+Synth | 0.9694 | 0.9226 | 115.82 |
+| 1600 | Real-only | 0.9463 | 0.8721 | 138.65 |
+| 1600 | Real+Synth | 0.9761 | 0.9358 | 152.78 |
+
+Additional figures:
+- `reports/figures/accuracy_vs_count.png`
+- `reports/figures/macrof1_vs_count.png`
+- `reports/figures/time_vs_count.png`
+
 ## 9) Comparison with Classical Augmentation
 
 At 10% real data:
@@ -316,4 +339,49 @@ To regenerate all report figures from current CSV results:
 MPLCONFIGDIR=/Users/ardaerdogan/Desktop/gan-lab/.mplconfig \
   /Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
   scripts/generate_report_figures.py
+```
+
+## 15) Professor-Requested Extensions (Implemented Scripts)
+
+To align with the latest instructor feedback, the repository now includes:
+
+1. Count-based trend analysis support (e.g., `200 400 800 1600` real samples):
+
+```bash
+FORCE_DEVICE=cpu python train_classifier.py \
+  --epochs 20 \
+  --counts 200 400 800 1600 \
+  --skip-aug \
+  --num-workers 0 \
+  --out-csv runs_classifier/task1_amount_trend_counts_cpu.csv
+```
+
+2. Task 2 strict three-case report generation (`only synthetic`, `only real`, `real + synthetic`):
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/generate_task2_three_case_report.py \
+  --csv-path runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv \
+  --ratio 100%
+```
+
+3. Task 1 GAN-quality metric (FID) script:
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/compute_fid.py \
+  --real-dir data/split/train \
+  --fake-dir data/synthetic \
+  --weights-path /ABSOLUTE/PATH/inception_v3_google-0cc3c7bd.pth \
+  --out-json reports/fid_task1.json
+```
+
+4. Optional full automation for GAN scale trend + FID:
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/run_task1_gan_scale.py \
+  --counts 200 400 800 1600 \
+  --epochs 30 \
+  --weights-path /ABSOLUTE/PATH/inception_v3_google-0cc3c7bd.pth
 ```

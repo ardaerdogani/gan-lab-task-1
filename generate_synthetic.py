@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import torch
@@ -7,7 +8,6 @@ from models_gan import Generator
 from utils import get_best_device
 
 
-# Kendi checkpoint dosyana gore degistirebilirsin.
 CKPT_PATH = Path("runs_gan/ckpt_epoch_090.pt")
 OUT_ROOT = Path("data/synthetic")
 NUM_PER_CLASS = 400
@@ -31,13 +31,13 @@ def load_generator(ckpt_path: Path, device: torch.device):
 
 
 @torch.no_grad()
-def generate_for_class(generator, class_name, class_idx, z_dim, device):
-    out_dir = OUT_ROOT / class_name
+def generate_for_class(generator, class_name, class_idx, z_dim, device, out_root, num_per_class, batch_size):
+    out_dir = out_root / class_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     saved = 0
-    while saved < NUM_PER_CLASS:
-        current_batch = min(BATCH_SIZE, NUM_PER_CLASS - saved)
+    while saved < num_per_class:
+        current_batch = min(batch_size, num_per_class - saved)
         z = torch.randn(current_batch, z_dim, device=device)
         y = torch.full((current_batch,), class_idx, device=device, dtype=torch.long)
         fake = generator(z, y)
@@ -49,30 +49,54 @@ def generate_for_class(generator, class_name, class_idx, z_dim, device):
             save_image(fake[i], img_path)
 
         saved += current_batch
-        print(f"{class_name}: {saved}/{NUM_PER_CLASS}")
+        print(f"{class_name}: {saved}/{num_per_class}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate synthetic images from GAN checkpoint")
+    parser.add_argument("--ckpt-path", type=str, default=str(CKPT_PATH))
+    parser.add_argument("--out-root", type=str, default=str(OUT_ROOT))
+    parser.add_argument("--num-per-class", type=int, default=NUM_PER_CLASS)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--seed", type=int, default=SEED)
+    return parser.parse_args()
 
 
 def main():
-    torch.manual_seed(SEED)
+    args = parse_args()
+    torch.manual_seed(args.seed)
     device = get_best_device()
     if device.type in {"cuda", "mps"}:
         torch.set_float32_matmul_precision("high")
 
-    if not CKPT_PATH.exists():
-        raise FileNotFoundError(f"Checkpoint bulunamadi: {CKPT_PATH}")
+    ckpt_path = Path(args.ckpt_path)
+    out_root = Path(args.out_root)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint bulunamadi: {ckpt_path}")
 
-    generator, class_to_idx, z_dim = load_generator(CKPT_PATH, device)
+    generator, class_to_idx, z_dim = load_generator(ckpt_path, device)
 
     # idx sirasina gore isleyelim ki class_to_idx ile birebir uyumlu olsun.
     idx_to_class = sorted(class_to_idx.items(), key=lambda item: item[1])
-    print("Using checkpoint:", CKPT_PATH)
+    print("Using checkpoint:", ckpt_path)
     print("Device:", device)
     print("class_to_idx:", class_to_idx)
+    print("num_per_class:", args.num_per_class)
+    print("batch_size:", args.batch_size)
 
     for class_name, class_idx in idx_to_class:
-        generate_for_class(generator, class_name, class_idx, z_dim, device)
+        generate_for_class(
+            generator=generator,
+            class_name=class_name,
+            class_idx=class_idx,
+            z_dim=z_dim,
+            device=device,
+            out_root=out_root,
+            num_per_class=args.num_per_class,
+            batch_size=args.batch_size,
+        )
 
-    print("Done. Saved synthetic images under:", OUT_ROOT.resolve())
+    print("Done. Saved synthetic images under:", out_root.resolve())
 
 
 if __name__ == "__main__":

@@ -80,7 +80,7 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def make_stratified_subset(dataset, ratio, seed):
+def make_stratified_subset_by_ratio(dataset, ratio, seed):
     if ratio >= 1.0:
         return dataset
 
@@ -92,6 +92,62 @@ def make_stratified_subset(dataset, ratio, seed):
         rng.shuffle(class_indices)
         k = max(1, int(len(class_indices) * ratio))
         selected.extend(class_indices[:k].tolist())
+
+    rng.shuffle(selected)
+    return Subset(dataset, selected)
+
+
+def _allocate_per_class(total_count, class_counts):
+    if total_count < len(class_counts):
+        raise ValueError("Toplam sayi, class sayisindan kucuk olamaz.")
+
+    ratios = class_counts / class_counts.sum()
+    raw = ratios * total_count
+    alloc = np.floor(raw).astype(np.int64)
+    alloc = np.maximum(alloc, 1)
+
+    while alloc.sum() > total_count:
+        candidates = np.where(alloc > 1)[0]
+        if len(candidates) == 0:
+            break
+        idx = candidates[np.argmax(alloc[candidates])]
+        alloc[idx] -= 1
+
+    remainder = int(total_count - alloc.sum())
+    if remainder > 0:
+        frac = raw - np.floor(raw)
+        order = np.argsort(frac)[::-1]
+        for i in range(remainder):
+            alloc[order[i % len(order)]] += 1
+
+    return alloc
+
+
+def make_stratified_subset_by_count(dataset, total_count, seed):
+    n_total = len(dataset)
+    if total_count >= n_total:
+        return dataset
+    if total_count <= 0:
+        raise ValueError("Count secenegi pozitif olmali.")
+
+    targets = np.array(dataset.targets)
+    class_ids = np.unique(targets)
+    class_counts = np.array([int((targets == c).sum()) for c in class_ids], dtype=np.int64)
+    alloc = _allocate_per_class(total_count, class_counts)
+
+    rng = np.random.default_rng(seed)
+    selected = []
+    for class_id, take_count in zip(class_ids, alloc.tolist()):
+        class_indices = np.where(targets == class_id)[0]
+        rng.shuffle(class_indices)
+        k = min(int(take_count), len(class_indices))
+        selected.extend(class_indices[:k].tolist())
+
+    if len(selected) < total_count:
+        remaining = np.setdiff1d(np.arange(n_total), np.array(selected, dtype=np.int64), assume_unique=False)
+        rng.shuffle(remaining)
+        needed = total_count - len(selected)
+        selected.extend(remaining[:needed].tolist())
 
     rng.shuffle(selected)
     return Subset(dataset, selected)
@@ -235,7 +291,19 @@ def run_experiment(
 
 def write_results(rows, out_path):
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["ratio", "scenario", "augmentation", "accuracy", "macro_f1", "train_time_s"]
+    fieldnames = [
+        "setting_type",
+        "setting_value",
+        "ratio",
+        "scenario",
+        "augmentation",
+        "real_train_samples",
+        "synth_train_samples",
+        "total_train_samples",
+        "accuracy",
+        "macro_f1",
+        "train_time_s",
+    ]
     with out_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -251,6 +319,13 @@ def main():
     parser.add_argument("--num-workers", type=int, default=-1, help="-1 => auto")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ratios", type=float, nargs="+", default=[0.10, 0.25, 0.50, 1.00])
+    parser.add_argument(
+        "--counts",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Mutlak real train sample sayilari (or: 200 400 800 1600). Verilirse ratios yerine bu kullanilir.",
+    )
     parser.add_argument("--skip-aug", action="store_true", help="Skip optional classic augmentation scenario")
     parser.add_argument("--disable-balancing", action="store_true", help="Disable weighted sampler + class-weighted loss")
     parser.add_argument("--out-csv", type=str, default="runs_classifier/amount_vs_accuracy_time.csv")
@@ -280,11 +355,15 @@ def main():
 
     print("Device:", device)
     print("class_to_idx:", real_train_plain.class_to_idx)
-    print("Ratios:", args.ratios)
+    if args.counts:
+        print("Counts:", args.counts)
+    else:
+        print("Ratios:", args.ratios)
     print("num_workers:", num_workers)
     print("balancing:", "off" if args.disable_balancing else "on")
 
     rows = []
+    synth_count = len(synth_train_plain)
 
     synth_acc, synth_f1, synth_time = run_experiment(
         name="Synth-only (fixed baseline)",
@@ -300,20 +379,36 @@ def main():
     )
     rows.append(
         {
+            "setting_type": "fixed",
+            "setting_value": "fixed",
             "ratio": "fixed",
             "scenario": "synth_only",
             "augmentation": "no",
+            "real_train_samples": 0,
+            "synth_train_samples": synth_count,
+            "total_train_samples": synth_count,
             "accuracy": round(synth_acc, 4),
             "macro_f1": round(synth_f1, 4),
             "train_time_s": round(synth_time, 2),
         }
     )
 
-    for ratio in args.ratios:
-        ratio_tag = f"{int(ratio * 100)}%"
-        real_subset_plain = make_stratified_subset(real_train_plain, ratio, args.seed)
-        real_subset_aug = make_stratified_subset(real_train_aug, ratio, args.seed)
+    if args.counts:
+        settings = [("count", int(count), str(int(count))) for count in args.counts]
+    else:
+        settings = [("ratio", float(ratio), f"{int(ratio * 100)}%") for ratio in args.ratios]
+
+    for setting_type, setting_value, ratio_tag in settings:
+        if setting_type == "count":
+            real_subset_plain = make_stratified_subset_by_count(real_train_plain, int(setting_value), args.seed)
+            real_subset_aug = make_stratified_subset_by_count(real_train_aug, int(setting_value), args.seed)
+        else:
+            real_subset_plain = make_stratified_subset_by_ratio(real_train_plain, float(setting_value), args.seed)
+            real_subset_aug = make_stratified_subset_by_ratio(real_train_aug, float(setting_value), args.seed)
+
+        real_count = len(real_subset_plain)
         mixed_dataset = ConcatDataset([real_subset_plain, synth_train_plain])
+        mixed_count = len(mixed_dataset)
 
         real_acc, real_f1, real_time = run_experiment(
             name=f"Real-only ({ratio_tag})",
@@ -329,9 +424,14 @@ def main():
         )
         rows.append(
             {
+                "setting_type": setting_type,
+                "setting_value": setting_value,
                 "ratio": ratio_tag,
                 "scenario": "real_only",
                 "augmentation": "no",
+                "real_train_samples": real_count,
+                "synth_train_samples": 0,
+                "total_train_samples": real_count,
                 "accuracy": round(real_acc, 4),
                 "macro_f1": round(real_f1, 4),
                 "train_time_s": round(real_time, 2),
@@ -352,9 +452,14 @@ def main():
         )
         rows.append(
             {
+                "setting_type": setting_type,
+                "setting_value": setting_value,
                 "ratio": ratio_tag,
                 "scenario": "real_plus_synth",
                 "augmentation": "no",
+                "real_train_samples": real_count,
+                "synth_train_samples": synth_count,
+                "total_train_samples": mixed_count,
                 "accuracy": round(mix_acc, 4),
                 "macro_f1": round(mix_f1, 4),
                 "train_time_s": round(mix_time, 2),
@@ -376,9 +481,14 @@ def main():
             )
             rows.append(
                 {
+                    "setting_type": setting_type,
+                    "setting_value": setting_value,
                     "ratio": ratio_tag,
                     "scenario": "real_only",
                     "augmentation": "yes",
+                    "real_train_samples": real_count,
+                    "synth_train_samples": 0,
+                    "total_train_samples": real_count,
                     "accuracy": round(aug_acc, 4),
                     "macro_f1": round(aug_f1, 4),
                     "train_time_s": round(aug_time, 2),

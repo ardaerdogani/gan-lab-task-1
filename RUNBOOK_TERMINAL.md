@@ -53,6 +53,29 @@ FORCE_DEVICE=cpu python train_classifier.py \
   | tee logs/06_classifier_balanced_cpu.log
 ```
 
+## 5.1) Task 1 Trend by Data Amount (Professor Request)
+
+Use absolute real-data amounts instead of only two dataset sizes:
+
+```bash
+FORCE_DEVICE=cpu python train_classifier.py \
+  --epochs 20 \
+  --counts 200 400 800 1600 \
+  --skip-aug \
+  --num-workers 0 \
+  --out-csv runs_classifier/task1_amount_trend_counts_cpu.csv \
+  | tee logs/08_classifier_counts_cpu.log
+```
+
+Generate count-based trend figures:
+
+```bash
+MPLCONFIGDIR=/Users/ardaerdogan/Desktop/gan-lab/.mplconfig \
+  /Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/generate_count_trend_figures.py \
+  --csv-path runs_classifier/task1_amount_trend_counts_cpu.csv
+```
+
 ## 6) Optional Baseline (Unbalanced, CPU)
 
 ```bash
@@ -72,6 +95,8 @@ FORCE_DEVICE=cpu python train_classifier.py \
 - `logs/03_generate_synthetic.log`
 - `logs/06_classifier_balanced_cpu.log`
 - `runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv`
+- `logs/08_classifier_counts_cpu.log` (Task 1 count-trend run)
+- `runs_classifier/task1_amount_trend_counts_cpu.csv` (Task 1 count-trend table)
 - `logs/07_classifier_unbalanced_cpu.log` (optional)
 - `runs_classifier/amount_vs_accuracy_time_unbalanced_cpu.csv` (optional)
 
@@ -89,6 +114,58 @@ Generated files:
 - `reports/figures/time_vs_ratio_cpu_balanced.png`
 - `reports/figures/historical_v1_v2_main_100_comparison.png`
 - `reports/figures/historical_v1_v2_ratio_accuracy.png`
+- `reports/figures/accuracy_vs_count.png` (if count-trend CSV exists)
+- `reports/figures/macrof1_vs_count.png` (if count-trend CSV exists)
+- `reports/figures/time_vs_count.png` (if count-trend CSV exists)
+
+## 8.1) Task 2 Required Three-Case Comparison
+
+Professor requested only three Task 2 classification cases:
+- only synthetic
+- only real
+- real + synthetic
+
+Produce dedicated Task 2 markdown + chart from CSV:
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/generate_task2_three_case_report.py \
+  --csv-path runs_classifier/amount_vs_accuracy_time_balanced_cpu.csv \
+  --ratio 100%
+```
+
+Outputs:
+- `reports/task2_three_case_comparison.md`
+- `reports/figures/task2_three_case_comparison.png`
+
+## 8.2) Task 1 GAN FID (Training Part)
+
+`compute_fid.py` requires Inception v3 pretrained weights. If automatic download is unavailable, pass a local path:
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/compute_fid.py \
+  --real-dir data/split/train \
+  --fake-dir data/synthetic \
+  --weights-path /ABSOLUTE/PATH/inception_v3_google-0cc3c7bd.pth \
+  --per-class \
+  --out-json reports/fid_task1.json
+```
+
+## 8.3) Full Task 1 GAN Scale Automation (Optional)
+
+Runs GAN at multiple data amounts and collects FID trend:
+
+```bash
+/Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
+  scripts/run_task1_gan_scale.py \
+  --counts 200 400 800 1600 \
+  --epochs 30 \
+  --weights-path /ABSOLUTE/PATH/inception_v3_google-0cc3c7bd.pth
+```
+
+Main output:
+- `runs_gan/task1_fid_by_count.csv`
 
 ## Notes
 

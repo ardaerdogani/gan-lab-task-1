@@ -1,6 +1,7 @@
 /.DS_Store
 /.venv
 /.vscode
+/.torch-cache/
 
 # Python cache/artifacts
 /__pycache__/
