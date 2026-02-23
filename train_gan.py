@@ -1,6 +1,7 @@
 import argparse
 import random
 from pathlib import Path
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -101,7 +102,21 @@ def extract_targets(dataset):
     raise TypeError(f"Unsupported dataset type for target extraction: {type(dataset)}")
 
 
-def build_train_loader(data_train, img_size, batch_size, num_workers, subset_count, seed, device):
+def extract_class_to_idx(dataset: ImageFolder | Subset) -> Dict[str, int]:
+    if isinstance(dataset, Subset):
+        if not isinstance(dataset.dataset, ImageFolder):
+            raise TypeError(
+                f"Subset base dataset does not expose class_to_idx: {type(dataset.dataset)}"
+            )
+        return dataset.dataset.class_to_idx
+    if isinstance(dataset, ImageFolder):
+        return dataset.class_to_idx
+    raise TypeError(f"Unsupported dataset type for class_to_idx extraction: {type(dataset)}")
+
+
+def build_train_loader(
+    data_train, img_size, batch_size, num_workers, subset_count, seed, device
+) -> Tuple[ImageFolder | Subset, DataLoader]:
     train_ds = ImageFolder(data_train, transform=get_transform(img_size=img_size))
     train_ds = make_stratified_subset_by_count(train_ds, subset_count, seed)
     train_loader = DataLoader(
@@ -195,7 +210,7 @@ def main():
         device=device,
     )
 
-    class_to_idx = train_ds.dataset.class_to_idx if isinstance(train_ds, Subset) else train_ds.class_to_idx
+    class_to_idx = extract_class_to_idx(train_ds)
     num_classes = len(class_to_idx)
     class_targets = extract_targets(train_ds)
     class_counts = np.bincount(class_targets, minlength=num_classes).astype(np.int64)
