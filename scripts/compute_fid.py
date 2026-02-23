@@ -47,9 +47,15 @@ class InceptionFeatureExtractor(nn.Module):
     @staticmethod
     def _build_model(weights_path: Path | None):
         if weights_path is not None:
-            model = inception_v3(weights=None, aux_logits=False, transform_input=False)
             state = torch.load(weights_path, map_location="cpu")
-            model.load_state_dict(state)
+            has_aux_logits = any(k.startswith("AuxLogits.") for k in state.keys())
+            model = inception_v3(
+                weights=None,
+                aux_logits=has_aux_logits,
+                transform_input=False,
+                init_weights=False,
+            )
+            model.load_state_dict(state, strict=True)
         else:
             try:
                 model = inception_v3(weights=Inception_V3_Weights.IMAGENET1K_V1, transform_input=False)

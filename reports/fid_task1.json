@@ -1,0 +1,12 @@
+{
+  "real_dir": "data/split/train",
+  "fake_dir": "data/synthetic",
+  "real_count": 18751,
+  "fake_count": 1200,
+  "overall_fid": 178.78210804399603,
+  "per_class_fid": {
+    "apple": 165.7848460025864,
+    "banana": 269.03278226897027,
+    "orange": 260.0041429664458
+  }
+}

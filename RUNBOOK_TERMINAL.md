@@ -140,14 +140,16 @@ Outputs:
 
 ## 8.2) Task 1 GAN FID (Training Part)
 
-`compute_fid.py` requires Inception v3 pretrained weights. If automatic download is unavailable, pass a local path:
+`compute_fid.py` requires Inception v3 pretrained weights. If automatic download is unavailable, pass a local path.
+Recommended (validated) command:
 
 ```bash
+TORCH_HOME=/Users/ardaerdogan/Desktop/gan-lab/.torch-cache \
 /Users/ardaerdogan/Desktop/gan-lab/.venv/bin/python \
   scripts/compute_fid.py \
   --real-dir data/split/train \
   --fake-dir data/synthetic \
-  --weights-path /ABSOLUTE/PATH/inception_v3_google-0cc3c7bd.pth \
+  --weights-path /Users/ardaerdogan/Desktop/gan-lab/.torch-cache/hub/checkpoints/inception_v3_google-0cc3c7bd.pth \
   --per-class \
   --out-json reports/fid_task1.json
 ```
