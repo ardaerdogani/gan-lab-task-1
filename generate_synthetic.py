@@ -8,9 +8,9 @@ from models_gan import Generator
 from utils import get_best_device
 
 
-CKPT_PATH = Path("runs_gan/ckpt_epoch_090.pt")
-OUT_ROOT = Path("data/synthetic")
-NUM_PER_CLASS = 400
+CKPT_PATH = Path("runs_gan/task1_main/ckpt_epoch_100.pt")
+OUT_ROOT = Path("data/synthetic/task1_main")
+NUM_PER_CLASS = 600
 BATCH_SIZE = 64
 SEED = 42
 
@@ -23,11 +23,17 @@ def load_generator(ckpt_path: Path, device: torch.device):
 
     z_dim = ckpt.get("z_dim", 128)
     num_classes = ckpt.get("num_classes", len(class_to_idx))
+    img_size = ckpt.get("img_size", 32)
 
-    generator = Generator(z_dim=z_dim, num_classes=num_classes, img_channels=3).to(device)
+    generator = Generator(
+        z_dim=z_dim,
+        num_classes=num_classes,
+        img_channels=3,
+        img_size=img_size,
+    ).to(device)
     generator.load_state_dict(ckpt["G"])
     generator.eval()
-    return generator, class_to_idx, z_dim
+    return generator, class_to_idx, z_dim, img_size
 
 
 @torch.no_grad()
@@ -74,7 +80,7 @@ def main():
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint bulunamadi: {ckpt_path}")
 
-    generator, class_to_idx, z_dim = load_generator(ckpt_path, device)
+    generator, class_to_idx, z_dim, img_size = load_generator(ckpt_path, device)
 
     # idx sirasina gore isleyelim ki class_to_idx ile birebir uyumlu olsun.
     idx_to_class = sorted(class_to_idx.items(), key=lambda item: item[1])
@@ -83,6 +89,7 @@ def main():
     print("class_to_idx:", class_to_idx)
     print("num_per_class:", args.num_per_class)
     print("batch_size:", args.batch_size)
+    print("img_size:", img_size)
 
     for class_name, class_idx in idx_to_class:
         generate_for_class(

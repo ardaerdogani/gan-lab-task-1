@@ -16,7 +16,11 @@ def load_rows(path: Path):
 
 
 def filter_rows(rows, scenario):
-    return [r for r in rows if r["scenario"] == scenario and r["augmentation"] == "no" and r["ratio"] != "fixed"]
+    return [
+        r
+        for r in rows
+        if r["scenario"] == scenario and r["augmentation"] == "no" and r["ratio"] != "fixed"
+    ]
 
 
 def sort_by_real_count(rows):
@@ -55,48 +59,48 @@ def make_plots(rows, out_dir: Path):
     _, y_real_t = extract_xy(real, "train_time_s")
     _, y_mix_t = extract_xy(mix, "train_time_s")
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(x_real, y_real_acc, marker="o", label="Only Real")
-    ax.plot(x_mix, y_mix_acc, marker="o", label="Real + Synthetic")
+    fig, (ax_acc, ax_f1) = plt.subplots(1, 2, figsize=(12, 4.5), sharex=True)
+
+    ax_acc.plot(x_real, y_real_acc, marker="o", label="Only Real")
+    ax_acc.plot(x_mix, y_mix_acc, marker="o", label="Real + Synthetic")
     if synth_acc is not None:
-        ax.axhline(synth_acc, linestyle="--", linewidth=1.2, label=f"Only Synthetic ({synth_acc:.4f})")
-    ax.set_title("Accuracy vs Real Training Sample Count")
-    ax.set_xlabel("Real Training Samples")
-    ax.set_ylabel("Accuracy")
-    ax.set_xticks(x_real)
-    ax.set_ylim(0.0, 1.0)
-    ax.legend(loc="lower right")
-    save(fig, out_dir / "accuracy_vs_count.png")
+        ax_acc.axhline(synth_acc, linestyle="--", linewidth=1.2, label=f"Only Synthetic ({synth_acc:.4f})")
+    ax_acc.set_title("Accuracy")
+    ax_acc.set_xlabel("Training Size (real count)")
+    ax_acc.set_ylabel("Score")
+    ax_acc.set_xticks(x_real)
+    ax_acc.set_ylim(0.0, 1.0)
+    ax_acc.legend(loc="lower right")
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(x_real, y_real_f1, marker="o", label="Only Real")
-    ax.plot(x_mix, y_mix_f1, marker="o", label="Real + Synthetic")
+    ax_f1.plot(x_real, y_real_f1, marker="o", label="Only Real")
+    ax_f1.plot(x_mix, y_mix_f1, marker="o", label="Real + Synthetic")
     if synth_f1 is not None:
-        ax.axhline(synth_f1, linestyle="--", linewidth=1.2, label=f"Only Synthetic ({synth_f1:.4f})")
-    ax.set_title("Macro F1 vs Real Training Sample Count")
-    ax.set_xlabel("Real Training Samples")
-    ax.set_ylabel("Macro F1")
-    ax.set_xticks(x_real)
-    ax.set_ylim(0.0, 1.0)
-    ax.legend(loc="lower right")
-    save(fig, out_dir / "macrof1_vs_count.png")
+        ax_f1.axhline(synth_f1, linestyle="--", linewidth=1.2, label=f"Only Synthetic ({synth_f1:.4f})")
+    ax_f1.set_title("Macro F1")
+    ax_f1.set_xlabel("Training Size (real count)")
+    ax_f1.set_ylabel("Score")
+    ax_f1.set_xticks(x_real)
+    ax_f1.set_ylim(0.0, 1.0)
+    ax_f1.legend(loc="lower right")
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    save(fig, out_dir / "performance_vs_training_size.png")
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
     ax.plot(x_real, y_real_t, marker="o", label="Only Real")
     ax.plot(x_mix, y_mix_t, marker="o", label="Real + Synthetic")
     if synth_t is not None:
         ax.axhline(synth_t, linestyle="--", linewidth=1.2, label=f"Only Synthetic ({synth_t:.2f}s)")
-    ax.set_title("Train Time vs Real Training Sample Count")
-    ax.set_xlabel("Real Training Samples")
+    ax.set_title("Training Time vs Training Size")
+    ax.set_xlabel("Training Size (real count)")
     ax.set_ylabel("Train Time (s)")
     ax.set_xticks(x_real)
     ax.legend(loc="upper left")
-    save(fig, out_dir / "time_vs_count.png")
+    save(fig, out_dir / "training_time_vs_training_size.png")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate count-based trend plots for professor's Task 1 request.")
-    parser.add_argument("--csv-path", type=str, default="runs_classifier/task1_amount_trend_counts_cpu.csv")
+    parser.add_argument("--csv-path", type=str, default="runs_classifier/task1_counts_three_case_cpu.csv")
     parser.add_argument("--out-dir", type=str, default="reports/figures")
     return parser.parse_args()
 

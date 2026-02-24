@@ -16,10 +16,9 @@ from torchvision.datasets import ImageFolder
 from utils import default_num_workers, get_best_device, get_transform, should_pin_memory
 
 
-REAL_TRAIN = "data/split/train"
-REAL_VAL = "data/split/val"
-REAL_TEST = "data/split/test"
-SYNTH_DIR = "data/synthetic"
+DEFAULT_REAL_TRAIN = "data/split/train"
+DEFAULT_REAL_TEST = "data/split/test"
+DEFAULT_SYNTH_DIR = "data/synthetic/task1_main"
 OUT_DIR = Path("runs_classifier")
 
 
@@ -252,9 +251,10 @@ def run_experiment(
     class_weights_tensor = None
     if use_balancing:
         class_counts, class_weights_np, sample_weights_np = build_balancing_weights(train_dataset, num_classes)
+        sample_weights = sample_weights_np.tolist()
         sampler = WeightedRandomSampler(
-            weights=torch.as_tensor(sample_weights_np, dtype=torch.double),
-            num_samples=len(sample_weights_np),
+            weights=sample_weights,
+            num_samples=len(sample_weights),
             replacement=True,
         )
         class_weights_tensor = torch.as_tensor(class_weights_np, dtype=torch.float32, device=device)
@@ -311,7 +311,10 @@ def write_results(rows, out_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Classifier ablation: amount vs accuracy vs time")
+    parser = argparse.ArgumentParser(description="Classifier experiments: real/synth/mixed amount vs performance/time")
+    parser.add_argument("--real-train", type=str, default=DEFAULT_REAL_TRAIN)
+    parser.add_argument("--real-test", type=str, default=DEFAULT_REAL_TEST)
+    parser.add_argument("--synth-dir", type=str, default=DEFAULT_SYNTH_DIR)
     parser.add_argument("--img-size", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=20)
@@ -328,7 +331,7 @@ def main():
     )
     parser.add_argument("--skip-aug", action="store_true", help="Skip optional classic augmentation scenario")
     parser.add_argument("--disable-balancing", action="store_true", help="Disable weighted sampler + class-weighted loss")
-    parser.add_argument("--out-csv", type=str, default="runs_classifier/amount_vs_accuracy_time.csv")
+    parser.add_argument("--out-csv", type=str, default="runs_classifier/task1_counts_three_case_cpu.csv")
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -342,18 +345,24 @@ def main():
     train_transform_plain = get_train_transform(args.img_size, use_augmentation=False)
     train_transform_aug = get_train_transform(args.img_size, use_augmentation=True)
 
-    real_train_plain = ImageFolder(REAL_TRAIN, transform=train_transform_plain)
-    real_train_aug = ImageFolder(REAL_TRAIN, transform=train_transform_aug)
-    real_test = ImageFolder(REAL_TEST, transform=eval_transform)
-    synth_train_plain = ImageFolder(SYNTH_DIR, transform=train_transform_plain)
+    real_train_plain = ImageFolder(args.real_train, transform=train_transform_plain)
+    real_train_aug = ImageFolder(args.real_train, transform=train_transform_aug)
+    real_test = ImageFolder(args.real_test, transform=eval_transform)
+    synth_train_plain = ImageFolder(args.synth_dir, transform=train_transform_plain)
 
     if real_train_plain.class_to_idx != synth_train_plain.class_to_idx:
-        raise ValueError("real ve synthetic class_to_idx uyumsuz.")
+        raise ValueError(
+            "real ve synthetic class_to_idx uyumsuz. "
+            f"real={args.real_train} synth={args.synth_dir}"
+        )
 
     num_classes = len(real_train_plain.classes)
     test_loader = make_loader(real_test, args.batch_size, shuffle=False, num_workers=num_workers, device=device)
 
     print("Device:", device)
+    print("real_train:", args.real_train)
+    print("real_test:", args.real_test)
+    print("synth_dir:", args.synth_dir)
     print("class_to_idx:", real_train_plain.class_to_idx)
     if args.counts:
         print("Counts:", args.counts)
@@ -363,11 +372,14 @@ def main():
     print("balancing:", "off" if args.disable_balancing else "on")
 
     rows = []
-    synth_count = len(synth_train_plain)
+    synth_only_dataset = synth_train_plain
+    if args.counts:
+        synth_only_dataset = make_stratified_subset_by_count(synth_train_plain, max(args.counts), args.seed)
+    synth_only_count = len(synth_only_dataset)
 
     synth_acc, synth_f1, synth_time = run_experiment(
         name="Synth-only (fixed baseline)",
-        train_dataset=synth_train_plain,
+        train_dataset=synth_only_dataset,
         test_loader=test_loader,
         epochs=args.epochs,
         lr=args.lr,
@@ -385,8 +397,8 @@ def main():
             "scenario": "synth_only",
             "augmentation": "no",
             "real_train_samples": 0,
-            "synth_train_samples": synth_count,
-            "total_train_samples": synth_count,
+            "synth_train_samples": synth_only_count,
+            "total_train_samples": synth_only_count,
             "accuracy": round(synth_acc, 4),
             "macro_f1": round(synth_f1, 4),
             "train_time_s": round(synth_time, 2),
@@ -407,7 +419,13 @@ def main():
             real_subset_aug = make_stratified_subset_by_ratio(real_train_aug, float(setting_value), args.seed)
 
         real_count = len(real_subset_plain)
-        mixed_dataset = ConcatDataset([real_subset_plain, synth_train_plain])
+        if setting_type == "count":
+            synth_subset = make_stratified_subset_by_count(synth_train_plain, real_count, args.seed + real_count)
+        else:
+            synth_subset = synth_train_plain
+
+        synth_mix_count = len(synth_subset)
+        mixed_dataset = ConcatDataset([real_subset_plain, synth_subset])
         mixed_count = len(mixed_dataset)
 
         real_acc, real_f1, real_time = run_experiment(
@@ -458,7 +476,7 @@ def main():
                 "scenario": "real_plus_synth",
                 "augmentation": "no",
                 "real_train_samples": real_count,
-                "synth_train_samples": synth_count,
+                "synth_train_samples": synth_mix_count,
                 "total_train_samples": mixed_count,
                 "accuracy": round(mix_acc, 4),
                 "macro_f1": round(mix_f1, 4),
