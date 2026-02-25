@@ -1,361 +1,341 @@
-from __future__ import annotations
+"""
+cWGAN-GP Training Loop
+----------------------
+- WGAN loss + gradient penalty (λ=10)
+- n_critic from Config
+- Adam(β1=0.0, β2=0.9) for both G and D (TTUR: different lr okay)
+- Saves checkpoints + sample grids every N epochs
+- FID evaluation every fid_every epochs (default split: val, no augmentation)
+"""
 
-import argparse
-import csv
+import json
+import random
 from pathlib import Path
 
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from tqdm import tqdm
+import numpy as np
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms, utils as vutils
+from torchvision.models import inception_v3
 
-from gan_train.artifacts import prepare_fixed_grid, save_checkpoint, save_class_grids
-from gan_train.augment import diff_augment, parse_diffaugment_policy
-from gan_train.data import build_train_loader, extract_class_to_idx, extract_targets
-from gan_train.defaults import (
-    BATCH_SIZE,
-    BETAS,
-    CHANNELS,
-    DATA_TRAIN,
-    EPOCHS,
-    FAKE_LABEL,
-    IMG_SIZE,
-    LR,
-    OUT_DIR,
-    REAL_LABEL,
-    SEED,
-    Z_DIM,
-)
-from gan_train.fid_monitor import build_fid_eval_state, evaluate_fid
-from gan_train.optimization import grad_norm, gradient_penalty, sample_fake_labels
-from gan_train.runtime import set_seed
-from models_gan import Discriminator, Generator, weights_init
-from utils import default_num_workers, get_best_device
+from config import Config
+from models.gan import Generator, ProjectionCritic
+
+# ------------------------------------------------------------------ #
+#  Gradient penalty                                                    #
+# ------------------------------------------------------------------ #
+
+def gradient_penalty(critic, real, fake, labels, device):
+    B = real.size(0)
+    alpha = torch.rand(B, 1, 1, 1, device=device)
+    interp = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
+    d_interp = critic(interp, labels)
+    grads = torch.autograd.grad(
+        outputs=d_interp,
+        inputs=interp,
+        grad_outputs=torch.ones_like(d_interp),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
+    grads = grads.view(B, -1)
+    return ((grads.norm(2, dim=1) - 1) ** 2).mean()
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Conditional GAN training")
-    parser.add_argument("--data-train", type=str, default=DATA_TRAIN)
-    parser.add_argument("--out-dir", type=str, default=str(OUT_DIR))
-    parser.add_argument("--img-size", type=int, default=IMG_SIZE)
-    parser.add_argument("--z-dim", type=int, default=Z_DIM)
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--epochs", type=int, default=EPOCHS)
-    parser.add_argument("--lr", type=float, default=LR)
-    parser.add_argument("--lr-g", type=float, default=None)
-    parser.add_argument("--lr-d", type=float, default=None)
-    parser.add_argument("--beta1", type=float, default=BETAS[0])
-    parser.add_argument("--beta2", type=float, default=BETAS[1])
-    parser.add_argument("--seed", type=int, default=SEED)
-    parser.add_argument("--num-workers", type=int, default=-1, help="-1 => auto")
-    parser.add_argument(
-        "--subset-count",
-        type=int,
-        default=None,
-        help="Task 1 trend icin egitimde kullanilacak real image sayisi (or: 200, 400, 800, 1600).",
+# ------------------------------------------------------------------ #
+#  FID                                                                 #
+# ------------------------------------------------------------------ #
+
+@torch.no_grad()
+def get_inception_features(images, model, device, batch_size=64):
+    """Extract pool3 features from InceptionV3 for a tensor of images."""
+    # inception expects 299x299, RGB, normalized to ImageNet stats
+    up = torch.nn.Upsample(size=(299, 299), mode="bilinear", align_corners=False)
+    mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+    feats = []
+    for i in range(0, len(images), batch_size):
+        batch = images[i:i + batch_size].to(device)
+        # images come in [-1,1], rescale to [0,1] then ImageNet normalize (vectorized)
+        batch = (batch + 1) / 2
+        batch = (batch - mean) / std
+        batch = up(batch)
+        f = model(batch)
+        feats.append(f.cpu())
+    return torch.cat(feats, dim=0).numpy()
+
+
+def calc_fid(mu1, sigma1, mu2, sigma2):
+    """Numpy FID from precomputed statistics."""
+    from scipy import linalg
+    diff = mu1 - mu2
+    covmean = linalg.sqrtm(sigma1 @ sigma2)
+    if isinstance(covmean, tuple):
+        covmean = covmean[0]
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+    return float(diff @ diff + np.trace(sigma1 + sigma2 - 2 * covmean))
+
+
+def compute_fid(G, real_loader, num_classes, cfg, inception_model, device):
+    """Compute FID between real images and generated images."""
+    # collect real images
+    real_imgs = []
+    count = 0
+    target = cfg.fid_n_samples
+    for imgs, _ in real_loader:
+        real_imgs.append(imgs)
+        count += imgs.size(0)
+        if count >= target:
+            break
+    real_imgs = torch.cat(real_imgs)[:target]
+    n_fid = real_imgs.size(0)
+
+    # generate fake images
+    G.eval()
+    fake_imgs = []
+    remaining = n_fid
+    while remaining > 0:
+        bs = min(cfg.gan_batch, remaining)
+        z = torch.randn(bs, cfg.z_dim, device=device)
+        y = torch.randint(0, num_classes, (bs,), device=device)
+        fake_imgs.append(G(z, y).cpu())
+        remaining -= bs
+    fake_imgs = torch.cat(fake_imgs)[:n_fid]
+    G.train()
+
+    real_feats = get_inception_features(real_imgs, inception_model, device)
+    fake_feats = get_inception_features(fake_imgs, inception_model, device)
+
+    mu_r, sig_r = real_feats.mean(0), np.cov(real_feats, rowvar=False)
+    mu_f, sig_f = fake_feats.mean(0), np.cov(fake_feats, rowvar=False)
+
+    return calc_fid(mu_r, sig_r, mu_f, sig_f)
+
+
+def load_inception(device):
+    """Load InceptionV3 with pool3 output (2048-d)."""
+    model = inception_v3(weights="IMAGENET1K_V1", transform_input=False)
+    # remove final fc to get pool3 features
+    model.fc = torch.nn.Identity()
+    model.to(device)
+    model.eval()
+    return model
+
+
+# ------------------------------------------------------------------ #
+#  Helpers                                                             #
+# ------------------------------------------------------------------ #
+
+def make_loader(cfg: Config, split: str, train: bool):
+    tf_list = [
+        transforms.Resize((cfg.img_size, cfg.img_size)),
+    ]
+    if train:
+        tf_list.append(transforms.RandomHorizontalFlip())
+    tf_list.extend([
+        transforms.ToTensor(),
+        transforms.Normalize([0.5] * 3, [0.5] * 3),
+    ])
+    tf = transforms.Compose(tf_list)
+    ds = datasets.ImageFolder(str(cfg.data_root / split), transform=tf)
+    loader = DataLoader(
+        ds,
+        batch_size=cfg.gan_batch,
+        shuffle=train,
+        num_workers=cfg.num_workers,
+        pin_memory=cfg.pin_memory,
+        drop_last=train,
+        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
     )
-    parser.add_argument("--sample-every", type=int, default=5)
-    parser.add_argument("--checkpoint-every", type=int, default=10)
-
-    parser.add_argument("--gan-loss", choices=["bce", "hinge", "wgangp"], default="bce")
-    parser.add_argument("--use-spectral-norm", action="store_true")
-    parser.add_argument("--use-diffaugment", action="store_true")
-    parser.add_argument("--diffaugment-policy", type=str, default="color,translation,cutout")
-    parser.add_argument("--balanced-sampler", action="store_true")
-    parser.add_argument("--uniform-fake-labels", action="store_true")
-    parser.add_argument("--n-critic", type=int, default=1)
-    parser.add_argument("--gp-lambda", type=float, default=10.0)
-    parser.add_argument("--real-label", type=float, default=REAL_LABEL)
-    parser.add_argument("--fake-label", type=float, default=FAKE_LABEL)
-
-    parser.add_argument("--fid-every", type=int, default=0, help="Evaluate FID every N epochs (0 disables).")
-    parser.add_argument("--fid-eval-per-class", type=int, default=128)
-    parser.add_argument("--fid-weights-path", type=str, default=None)
-    parser.add_argument("--fid-device", type=str, default="same")
-    return parser.parse_args()
+    return loader, ds.classes
 
 
-def main():
-    args = parse_args()
-    if args.n_critic <= 0:
-        raise ValueError("--n-critic must be >= 1")
+def save_samples(G, fixed_z, fixed_y, epoch, out_dir, nrow=8):
+    G.eval()
+    with torch.no_grad():
+        imgs = G(fixed_z, fixed_y)
+    vutils.save_image(imgs, out_dir / f"samples_epoch{epoch:04d}.png",
+                      nrow=nrow, normalize=True, value_range=(-1, 1))
+    G.train()
 
-    set_seed(args.seed)
 
-    device = get_best_device()
-    num_workers = default_num_workers() if args.num_workers < 0 else args.num_workers
-    if device.type in {"cuda", "mps"}:
-        torch.set_float32_matmul_precision("high")
+# ------------------------------------------------------------------ #
+#  Main                                                                #
+# ------------------------------------------------------------------ #
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def train(cfg: Config):
+    device = torch.device(cfg.device if torch.backends.mps.is_available() else "cpu")
+    print(f"Device: {device}")
 
-    train_ds, train_loader = build_train_loader(
-        data_train=args.data_train,
-        img_size=args.img_size,
-        batch_size=args.batch_size,
-        num_workers=num_workers,
-        subset_count=args.subset_count,
-        seed=args.seed,
-        device=device,
-        balanced_sampler=args.balanced_sampler,
-    )
+    # reproducibility
+    torch.manual_seed(cfg.seed)
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
 
-    class_to_idx = extract_class_to_idx(train_ds)
-    num_classes = len(class_to_idx)
-    class_targets = extract_targets(train_ds)
-    class_counts = np.bincount(class_targets, minlength=num_classes).astype(np.int64)
+    train_loader, class_names = make_loader(cfg, split="train", train=True)
+    num_classes = len(class_names)
+    print(f"Classes ({num_classes}): {class_names}")
 
-    lr_g = args.lr_g if args.lr_g is not None else args.lr
-    lr_d = args.lr_d if args.lr_d is not None else args.lr
-    if args.gan_loss == "hinge" and args.lr_g is None and args.lr_d is None:
-        lr_g = args.lr * 0.5
-        lr_d = args.lr * 2.0
-
-    print("Device:", device)
-    print("num_workers:", num_workers)
-    print("class_to_idx:", class_to_idx)
-    print("effective_train_samples:", len(train_ds))
-    print("effective_class_counts:", class_counts.tolist())
-    print("gan_loss:", args.gan_loss)
-    print("use_spectral_norm:", args.use_spectral_norm)
-    print("use_diffaugment:", args.use_diffaugment, args.diffaugment_policy if args.use_diffaugment else "")
-    print("balanced_sampler:", args.balanced_sampler)
-    print("uniform_fake_labels:", args.uniform_fake_labels)
-    print("n_critic:", args.n_critic)
-    print("lr_g:", lr_g, "lr_d:", lr_d)
-
-    generator = Generator(
-        z_dim=args.z_dim,
-        num_classes=num_classes,
-        img_channels=CHANNELS,
-        img_size=args.img_size,
-    ).to(device)
-    discriminator = Discriminator(
-        num_classes=num_classes,
-        img_channels=CHANNELS,
-        img_size=args.img_size,
-        use_spectral_norm=args.use_spectral_norm,
-    ).to(device)
-    generator.apply(weights_init)
-    discriminator.apply(weights_init)
-
-    bce_criterion = nn.BCEWithLogitsLoss()
-    opt_g = optim.Adam(generator.parameters(), lr=lr_g, betas=(args.beta1, args.beta2))
-    opt_d = optim.Adam(discriminator.parameters(), lr=lr_d, betas=(args.beta1, args.beta2))
-    diffaugment_ops = parse_diffaugment_policy(args.diffaugment_policy) if args.use_diffaugment else []
-
-    fixed_z, fixed_labels = prepare_fixed_grid(
-        num_classes=num_classes,
-        z_dim=args.z_dim,
-        device=device,
-        per_class=36,
-        seed=args.seed,
-    )
-
-    fid_state = build_fid_eval_state(
-        args=args,
-        class_to_idx=class_to_idx,
-        z_dim=args.z_dim,
-        train_device=device,
-        num_workers=num_workers,
-    )
-    if fid_state.enabled:
-        print(
-            "FID monitor enabled:",
-            f"every={args.fid_every}",
-            f"per_class={args.fid_eval_per_class}",
-            f"device={fid_state.device}",
+    fid_split = cfg.fid_eval_split
+    fid_split_path = cfg.data_root / fid_split
+    if not fid_split_path.exists():
+        print(f"FID split '{fid_split}' not found, falling back to 'train'.")
+        fid_split = "train"
+    fid_loader, fid_classes = make_loader(cfg, split=fid_split, train=False)
+    if fid_classes != class_names:
+        raise RuntimeError(
+            f"Class mismatch between train ({class_names}) and {fid_split} ({fid_classes})."
         )
+    print(f"FID eval split: {fid_split}  samples={len(fid_loader.dataset)}")
 
-    metrics_path = out_dir / "metrics.csv"
-    class_names_ordered = [name for name, _ in sorted(class_to_idx.items(), key=lambda kv: kv[1])]
-    metric_fieldnames = [
-        "epoch",
-        "loss_d",
-        "loss_g",
-        "grad_norm_d",
-        "grad_norm_g",
-        "d_real_mean",
-        "d_fake_mean",
-        "gp",
-        "fid_overall",
-    ] + [f"fid_{name}" for name in class_names_ordered]
+    G = Generator(z_dim=cfg.z_dim, num_classes=num_classes).to(device)
+    D = ProjectionCritic(num_classes=num_classes).to(device)
 
-    with metrics_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=metric_fieldnames)
-        writer.writeheader()
+    opt_G = torch.optim.Adam(G.parameters(), lr=cfg.gan_lr_g, betas=(0.0, 0.9))
+    opt_D = torch.optim.Adam(D.parameters(), lr=cfg.gan_lr_d, betas=(0.0, 0.9))
+
+    # fixed noise for visual tracking
+    n_samples = 24  # 8 per class
+    fixed_z = torch.randn(n_samples, cfg.z_dim, device=device)
+    fixed_y = torch.arange(num_classes, device=device).repeat_interleave(n_samples // num_classes)
+
+    out_dir = Path(cfg.out_root) / "gan"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir = out_dir / "checkpoints"
+    ckpt_dir.mkdir(exist_ok=True)
+
+    # FID setup
+    inception_model = load_inception(device)
+    fid_log = []
+    best_fid = float("inf")
 
     global_step = 0
-    last_g_loss = 0.0
-    for epoch in range(1, args.epochs + 1):
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}")
-        loss_g_sum = 0.0
-        loss_d_sum = 0.0
-        d_real_sum = 0.0
-        d_fake_sum = 0.0
-        grad_norm_d_sum = 0.0
-        grad_norm_g_sum = 0.0
-        gp_sum = 0.0
-        g_update_count = 0
-        d_update_count = 0
 
-        for real_imgs, labels in pbar:
-            real_imgs = real_imgs.to(device, non_blocking=True)
-            labels = labels.to(device, dtype=torch.long, non_blocking=True)
-            n = real_imgs.size(0)
+    for epoch in range(1, cfg.gan_epochs + 1):
+        d_loss_acc, g_loss_acc, n_batches = 0.0, 0.0, 0
+        d_real_acc, d_fake_acc, gp_acc = 0.0, 0.0, 0.0
 
-            fake_labels_d = sample_fake_labels(labels, num_classes, device, args.uniform_fake_labels)
-            z = torch.randn(n, args.z_dim, device=device)
-            fake_imgs = generator(z, fake_labels_d).detach()
+        for real_imgs, real_labels in train_loader:
+            real_imgs = real_imgs.to(device)
+            real_labels = real_labels.to(device)
+            B = real_imgs.size(0)
 
-            real_for_d = diff_augment(real_imgs, diffaugment_ops) if args.use_diffaugment else real_imgs
-            fake_for_d = diff_augment(fake_imgs, diffaugment_ops) if args.use_diffaugment else fake_imgs
+            # ---- Train Critic ---- #
+            z = torch.randn(B, cfg.z_dim, device=device)
+            # Keep fake conditioning aligned with the current real batch labels.
+            # This also keeps GP conditioning consistent for interpolated samples.
+            fake_labels = real_labels
+            with torch.no_grad():
+                fake_imgs = G(z, fake_labels)
 
-            opt_d.zero_grad(set_to_none=True)
-            d_real = discriminator(real_for_d, labels)
-            d_fake = discriminator(fake_for_d, fake_labels_d)
+            d_real = D(real_imgs, real_labels).mean()
+            # Critic must score fake images with their own conditioning labels.
+            d_fake = D(fake_imgs, fake_labels).mean()
+            gp = gradient_penalty(D, real_imgs, fake_imgs, real_labels, device)
+            d_loss = d_fake - d_real + cfg.gp_lambda * gp
 
-            gp_value = torch.tensor(0.0, device=device)
-            if args.gan_loss == "bce":
-                real_targets = torch.full((n,), args.real_label, device=device)
-                fake_targets = torch.full((n,), args.fake_label, device=device)
-                loss_d = bce_criterion(d_real, real_targets) + bce_criterion(d_fake, fake_targets)
-            elif args.gan_loss == "hinge":
-                loss_d = torch.relu(1.0 - d_real).mean() + torch.relu(1.0 + d_fake).mean()
-            elif args.gan_loss == "wgangp":
-                gp_value = gradient_penalty(discriminator, real_imgs, fake_imgs, labels)
-                loss_d = -(d_real.mean() - d_fake.mean()) + args.gp_lambda * gp_value
-            else:
-                raise ValueError(f"Unsupported gan_loss: {args.gan_loss}")
+            opt_D.zero_grad()
+            d_loss.backward()
+            opt_D.step()
 
-            loss_d.backward()
-            grad_d = grad_norm(discriminator)
-            opt_d.step()
+            d_loss_acc += d_loss.item()
+            d_real_acc += d_real.item()
+            d_fake_acc += d_fake.item()
+            gp_acc += gp.item()
 
-            loss_d_sum += float(loss_d.item())
-            d_real_sum += float(d_real.mean().item())
-            d_fake_sum += float(d_fake.mean().item())
-            gp_sum += float(gp_value.item())
-            grad_norm_d_sum += grad_d
-            d_update_count += 1
-
-            do_g_update = ((global_step + 1) % args.n_critic) == 0
-            if do_g_update:
-                fake_labels_g = sample_fake_labels(labels, num_classes, device, args.uniform_fake_labels)
-                z_g = torch.randn(n, args.z_dim, device=device)
-                fake_for_g = generator(z_g, fake_labels_g)
-                fake_for_g_in = diff_augment(fake_for_g, diffaugment_ops) if args.use_diffaugment else fake_for_g
-
-                opt_g.zero_grad(set_to_none=True)
-                d_fake_for_g = discriminator(fake_for_g_in, fake_labels_g)
-                if args.gan_loss == "bce":
-                    g_targets = torch.full((n,), args.real_label, device=device)
-                    loss_g = bce_criterion(d_fake_for_g, g_targets)
-                elif args.gan_loss in {"hinge", "wgangp"}:
-                    loss_g = -d_fake_for_g.mean()
-                else:
-                    raise ValueError(f"Unsupported gan_loss: {args.gan_loss}")
-
-                loss_g.backward()
-                grad_g = grad_norm(generator)
-                opt_g.step()
-
-                last_g_loss = float(loss_g.item())
-                loss_g_sum += last_g_loss
-                grad_norm_g_sum += grad_g
-                g_update_count += 1
-
-            pbar.set_postfix({"loss_d": f"{loss_d.item():.3f}", "loss_g": f"{last_g_loss:.3f}"})
+            # ---- Train Generator every n_critic steps ---- #
             global_step += 1
+            if global_step % cfg.n_critic == 0:
+                z = torch.randn(B, cfg.z_dim, device=device)
+                gen_labels = torch.randint(0, num_classes, (B,), device=device)
+                fake_imgs = G(z, gen_labels)
+                g_loss = -D(fake_imgs, gen_labels).mean()
 
-        loss_d_avg = loss_d_sum / max(1, d_update_count)
-        loss_g_avg = loss_g_sum / max(1, g_update_count)
-        grad_norm_d_avg = grad_norm_d_sum / max(1, d_update_count)
-        grad_norm_g_avg = grad_norm_g_sum / max(1, g_update_count)
-        d_real_avg = d_real_sum / max(1, d_update_count)
-        d_fake_avg = d_fake_sum / max(1, d_update_count)
-        gp_avg = gp_sum / max(1, d_update_count)
+                opt_G.zero_grad()
+                g_loss.backward()
+                opt_G.step()
 
-        fid_overall = ""
-        per_class_fid = {}
-        should_eval_fid = fid_state.enabled and (epoch == 1 or (args.fid_every > 0 and epoch % args.fid_every == 0))
-        if should_eval_fid:
-            fid_overall_value, per_class_fid = evaluate_fid(generator, fid_state)
-            fid_overall = f"{fid_overall_value:.6f}"
-            print(
-                f"Epoch {epoch}: loss_d={loss_d_avg:.4f} loss_g={loss_g_avg:.4f} "
-                f"grad_d={grad_norm_d_avg:.4f} grad_g={grad_norm_g_avg:.4f} fid={fid_overall}"
-            )
+                g_loss_acc += g_loss.item()
+
+            n_batches += 1
+
+        n_g_updates = max(1, n_batches // cfg.n_critic)
+        d_avg = d_loss_acc / n_batches
+        g_avg = g_loss_acc / n_g_updates
+        d_real_avg = d_real_acc / n_batches
+        d_fake_avg = d_fake_acc / n_batches
+        gp_avg = gp_acc / n_batches
+        w_dist = d_real_avg - d_fake_avg
+
+        # FID evaluation
+        fid_str = ""
+        if epoch % cfg.fid_every == 0 or epoch == cfg.gan_epochs:
+            fid = compute_fid(G, fid_loader, num_classes, cfg, inception_model, device)
+            fid_log.append({
+                "epoch": epoch,
+                "fid": fid,
+                "d_loss": d_avg,
+                "g_loss": g_avg,
+                "d_real": d_real_avg,
+                "d_fake": d_fake_avg,
+                "gp": gp_avg,
+                "w_dist": w_dist,
+            })
+            fid_str = f"  FID: {fid:.2f}"
+
+            if fid < best_fid:
+                best_fid = fid
+                torch.save({
+                    "epoch": epoch,
+                    "fid": fid,
+                    "G": G.state_dict(),
+                    "D": D.state_dict(),
+                    "opt_G": opt_G.state_dict(),
+                    "opt_D": opt_D.state_dict(),
+                }, ckpt_dir / "best_fid.pt")
         else:
-            print(
-                f"Epoch {epoch}: loss_d={loss_d_avg:.4f} loss_g={loss_g_avg:.4f} "
-                f"grad_d={grad_norm_d_avg:.4f} grad_g={grad_norm_g_avg:.4f}"
-            )
+            fid_log.append({
+                "epoch": epoch,
+                "d_loss": d_avg,
+                "g_loss": g_avg,
+                "d_real": d_real_avg,
+                "d_fake": d_fake_avg,
+                "gp": gp_avg,
+                "w_dist": w_dist,
+            })
 
-        should_save_sample = epoch == 1 or (args.sample_every > 0 and epoch % args.sample_every == 0)
-        should_save_ckpt = args.checkpoint_every > 0 and epoch % args.checkpoint_every == 0
-        if should_save_sample:
-            save_class_grids(
-                epoch=epoch,
-                generator=generator,
-                out_dir=out_dir,
-                fixed_z=fixed_z,
-                fixed_labels=fixed_labels,
-                num_classes=num_classes,
-            )
-        if should_save_ckpt:
-            save_checkpoint(
-                epoch=epoch,
-                generator=generator,
-                discriminator=discriminator,
-                opt_g=opt_g,
-                opt_d=opt_d,
-                class_to_idx=class_to_idx,
-                out_dir=out_dir,
-                config={
-                    "img_size": args.img_size,
-                    "z_dim": args.z_dim,
-                    "num_classes": num_classes,
-                    "gan_loss": args.gan_loss,
-                    "use_spectral_norm": args.use_spectral_norm,
-                    "use_diffaugment": args.use_diffaugment,
-                    "diffaugment_policy": args.diffaugment_policy,
-                    "n_critic": args.n_critic,
-                    "balanced_sampler": args.balanced_sampler,
-                    "uniform_fake_labels": args.uniform_fake_labels,
-                    "gp_lambda": args.gp_lambda,
-                    "lr_g": lr_g,
-                    "lr_d": lr_d,
-                    "beta1": args.beta1,
-                    "beta2": args.beta2,
-                },
-            )
+        print(
+            f"[Epoch {epoch:03d}/{cfg.gan_epochs}]  "
+            f"D_loss: {d_avg:.4f}  "
+            f"G_loss: {g_avg:.4f}  "
+            f"W_dist: {w_dist:.4f}  "
+            f"GP: {gp_avg:.4f}{fid_str}"
+        )
 
-        row = {
-            "epoch": epoch,
-            "loss_d": f"{loss_d_avg:.6f}",
-            "loss_g": f"{loss_g_avg:.6f}",
-            "grad_norm_d": f"{grad_norm_d_avg:.6f}",
-            "grad_norm_g": f"{grad_norm_g_avg:.6f}",
-            "d_real_mean": f"{d_real_avg:.6f}",
-            "d_fake_mean": f"{d_fake_avg:.6f}",
-            "gp": f"{gp_avg:.6f}",
-            "fid_overall": fid_overall,
-        }
-        for class_name in class_names_ordered:
-            value = per_class_fid.get(class_name)
-            row[f"fid_{class_name}"] = "" if value is None else f"{float(value):.6f}"
+        # save samples
+        if epoch % cfg.sample_every == 0 or epoch == 1:
+            save_samples(G, fixed_z, fixed_y, epoch, out_dir)
 
-        with metrics_path.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=metric_fieldnames)
-            writer.writerow(row)
+        # save checkpoint
+        if epoch % cfg.ckpt_every == 0 or epoch == cfg.gan_epochs:
+            torch.save({
+                "epoch": epoch,
+                "G": G.state_dict(),
+                "D": D.state_dict(),
+                "opt_G": opt_G.state_dict(),
+                "opt_D": opt_D.state_dict(),
+            }, ckpt_dir / f"ckpt_epoch{epoch:04d}.pt")
 
-    print("Training finished.")
-    print("Outputs in:", out_dir.resolve())
-    print("Metrics CSV:", metrics_path.resolve())
+    # save training log
+    with open(out_dir / "train_log.json", "w") as f:
+        json.dump(fid_log, f, indent=2)
+    print(f"Training finished. Log saved to {out_dir / 'train_log.json'}")
+    if best_fid < float("inf"):
+        print(f"Best FID: {best_fid:.2f} (checkpoint: {ckpt_dir / 'best_fid.pt'})")
+    return G, D
 
 
 if __name__ == "__main__":
-    main()
+    cfg = Config()
+    train(cfg)

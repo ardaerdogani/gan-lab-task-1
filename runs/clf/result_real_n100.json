@@ -1,0 +1,24 @@
+{
+  "scenario": "real",
+  "n_per_class": 100,
+  "train_size": 300,
+  "test_accuracy": 0.9898,
+  "train_time_sec": 14.4,
+  "per_class": {
+    "apple": {
+      "precision": 1.0,
+      "recall": 0.9695,
+      "f1": 0.9845
+    },
+    "banana": {
+      "precision": 0.9743,
+      "recall": 1.0,
+      "f1": 0.987
+    },
+    "orange": {
+      "precision": 0.996,
+      "recall": 1.0,
+      "f1": 0.998
+    }
+  }
+}
