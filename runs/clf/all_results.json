@@ -1,0 +1,362 @@
+[
+  {
+    "scenario": "real",
+    "n_per_class": 100,
+    "train_size": 300,
+    "test_accuracy": 0.9898,
+    "train_time_sec": 14.4,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9695,
+        "f1": 0.9845
+      },
+      "banana": {
+        "precision": 0.9743,
+        "recall": 1.0,
+        "f1": 0.987
+      },
+      "orange": {
+        "precision": 0.996,
+        "recall": 1.0,
+        "f1": 0.998
+      }
+    }
+  },
+  {
+    "scenario": "synth",
+    "n_per_class": 100,
+    "train_size": 300,
+    "test_accuracy": 0.9729,
+    "train_time_sec": 14.1,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9187,
+        "f1": 0.9576
+      },
+      "banana": {
+        "precision": 0.9628,
+        "recall": 1.0,
+        "f1": 0.9811
+      },
+      "orange": {
+        "precision": 0.9591,
+        "recall": 1.0,
+        "f1": 0.9791
+      }
+    }
+  },
+  {
+    "scenario": "both",
+    "n_per_class": 100,
+    "train_size": 600,
+    "test_accuracy": 0.9885,
+    "train_time_sec": 21.8,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9654,
+        "f1": 0.9824
+      },
+      "banana": {
+        "precision": 0.9743,
+        "recall": 1.0,
+        "f1": 0.987
+      },
+      "orange": {
+        "precision": 0.9919,
+        "recall": 1.0,
+        "f1": 0.996
+      }
+    }
+  },
+  {
+    "scenario": "real",
+    "n_per_class": 200,
+    "train_size": 600,
+    "test_accuracy": 0.9912,
+    "train_time_sec": 20.8,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9736,
+        "f1": 0.9866
+      },
+      "banana": {
+        "precision": 0.9781,
+        "recall": 1.0,
+        "f1": 0.9889
+      },
+      "orange": {
+        "precision": 0.996,
+        "recall": 1.0,
+        "f1": 0.998
+      }
+    }
+  },
+  {
+    "scenario": "synth",
+    "n_per_class": 200,
+    "train_size": 600,
+    "test_accuracy": 0.9702,
+    "train_time_sec": 20.6,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9106,
+        "f1": 0.9532
+      },
+      "banana": {
+        "precision": 0.9685,
+        "recall": 1.0,
+        "f1": 0.984
+      },
+      "orange": {
+        "precision": 0.9462,
+        "recall": 1.0,
+        "f1": 0.9723
+      }
+    }
+  },
+  {
+    "scenario": "both",
+    "n_per_class": 200,
+    "train_size": 1200,
+    "test_accuracy": 0.9878,
+    "train_time_sec": 34.6,
+    "per_class": {
+      "apple": {
+        "precision": 0.9857,
+        "recall": 0.9776,
+        "f1": 0.9816
+      },
+      "banana": {
+        "precision": 0.9798,
+        "recall": 0.9858,
+        "f1": 0.9828
+      },
+      "orange": {
+        "precision": 0.998,
+        "recall": 1.0,
+        "f1": 0.999
+      }
+    }
+  },
+  {
+    "scenario": "real",
+    "n_per_class": 400,
+    "train_size": 1200,
+    "test_accuracy": 0.9783,
+    "train_time_sec": 35.3,
+    "per_class": {
+      "apple": {
+        "precision": 0.9492,
+        "recall": 0.9878,
+        "f1": 0.9681
+      },
+      "banana": {
+        "precision": 0.9936,
+        "recall": 0.9472,
+        "f1": 0.9698
+      },
+      "orange": {
+        "precision": 0.9939,
+        "recall": 1.0,
+        "f1": 0.997
+      }
+    }
+  },
+  {
+    "scenario": "synth",
+    "n_per_class": 400,
+    "train_size": 1200,
+    "test_accuracy": 0.9871,
+    "train_time_sec": 35.6,
+    "per_class": {
+      "apple": {
+        "precision": 1.0,
+        "recall": 0.9614,
+        "f1": 0.9803
+      },
+      "banana": {
+        "precision": 0.9762,
+        "recall": 1.0,
+        "f1": 0.988
+      },
+      "orange": {
+        "precision": 0.986,
+        "recall": 1.0,
+        "f1": 0.9929
+      }
+    }
+  },
+  {
+    "scenario": "both",
+    "n_per_class": 400,
+    "train_size": 2400,
+    "test_accuracy": 0.9682,
+    "train_time_sec": 62.9,
+    "per_class": {
+      "apple": {
+        "precision": 0.919,
+        "recall": 0.9919,
+        "f1": 0.9541
+      },
+      "banana": {
+        "precision": 0.9934,
+        "recall": 0.9126,
+        "f1": 0.9513
+      },
+      "orange": {
+        "precision": 0.998,
+        "recall": 1.0,
+        "f1": 0.999
+      }
+    }
+  },
+  {
+    "scenario": "real",
+    "n_per_class": 800,
+    "train_size": 2400,
+    "test_accuracy": 0.9973,
+    "train_time_sec": 63.9,
+    "per_class": {
+      "apple": {
+        "precision": 0.9939,
+        "recall": 0.998,
+        "f1": 0.9959
+      },
+      "banana": {
+        "precision": 0.998,
+        "recall": 0.9939,
+        "f1": 0.9959
+      },
+      "orange": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    }
+  },
+  {
+    "scenario": "synth",
+    "n_per_class": 800,
+    "train_size": 2400,
+    "test_accuracy": 0.9885,
+    "train_time_sec": 64.0,
+    "per_class": {
+      "apple": {
+        "precision": 0.9979,
+        "recall": 0.9675,
+        "f1": 0.9825
+      },
+      "banana": {
+        "precision": 0.98,
+        "recall": 0.998,
+        "f1": 0.9889
+      },
+      "orange": {
+        "precision": 0.988,
+        "recall": 1.0,
+        "f1": 0.9939
+      }
+    }
+  },
+  {
+    "scenario": "both",
+    "n_per_class": 800,
+    "train_size": 4800,
+    "test_accuracy": 0.9885,
+    "train_time_sec": 119.6,
+    "per_class": {
+      "apple": {
+        "precision": 0.9684,
+        "recall": 0.998,
+        "f1": 0.983
+      },
+      "banana": {
+        "precision": 0.9979,
+        "recall": 0.9675,
+        "f1": 0.9825
+      },
+      "orange": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    }
+  },
+  {
+    "scenario": "real",
+    "n_per_class": 1300,
+    "train_size": 3900,
+    "test_accuracy": 0.9912,
+    "train_time_sec": 97.5,
+    "per_class": {
+      "apple": {
+        "precision": 0.9761,
+        "recall": 0.998,
+        "f1": 0.9869
+      },
+      "banana": {
+        "precision": 1.0,
+        "recall": 0.9756,
+        "f1": 0.9877
+      },
+      "orange": {
+        "precision": 0.998,
+        "recall": 1.0,
+        "f1": 0.999
+      }
+    }
+  },
+  {
+    "scenario": "synth",
+    "n_per_class": 1300,
+    "train_size": 3900,
+    "test_accuracy": 0.9892,
+    "train_time_sec": 96.3,
+    "per_class": {
+      "apple": {
+        "precision": 0.9917,
+        "recall": 0.9756,
+        "f1": 0.9836
+      },
+      "banana": {
+        "precision": 0.9839,
+        "recall": 0.9919,
+        "f1": 0.9879
+      },
+      "orange": {
+        "precision": 0.9919,
+        "recall": 1.0,
+        "f1": 0.996
+      }
+    }
+  },
+  {
+    "scenario": "both",
+    "n_per_class": 1300,
+    "train_size": 7800,
+    "test_accuracy": 0.9932,
+    "train_time_sec": 190.4,
+    "per_class": {
+      "apple": {
+        "precision": 0.982,
+        "recall": 0.998,
+        "f1": 0.9899
+      },
+      "banana": {
+        "precision": 0.9979,
+        "recall": 0.9817,
+        "f1": 0.9898
+      },
+      "orange": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    }
+  }
+]
