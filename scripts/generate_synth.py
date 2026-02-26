@@ -1,5 +1,5 @@
 """
-Generate synthetic image pool from a trained cWGAN-GP generator.
+Generate synthetic image pool from a trained CGAN generator.
 Usage:
     python scripts/generate_synth.py --ckpt runs/gan/checkpoints/ckpt_epoch0100.pt \
                                       --n_per_class 500 \

@@ -1,9 +1,10 @@
 """
-cWGAN-GP Training Loop
-----------------------
-- WGAN loss + gradient penalty (λ=10)
-- n_critic from Config
-- Adam(β1=0.0, β2=0.9) for both G and D (TTUR: different lr okay)
+CGAN Training Loop
+------------------
+- BCEWithLogitsLoss for both D and G
+- D targets: real=1, fake=0  |  G target: 1 (fool D)
+- Classic 1 D step + 1 G step per batch iteration
+- Adam(β1=0.5, β2=0.999) — standard DCGAN/CGAN betas
 - Saves checkpoints + sample grids every N epochs
 - FID evaluation every fid_every epochs (default split: val, no augmentation)
 """
@@ -13,32 +14,14 @@ import random
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, utils as vutils
 from torchvision.models import inception_v3
 
 from config import Config
-from models.gan import Generator, ProjectionCritic
-
-# ------------------------------------------------------------------ #
-#  Gradient penalty                                                    #
-# ------------------------------------------------------------------ #
-
-def gradient_penalty(critic, real, fake, labels, device):
-    B = real.size(0)
-    alpha = torch.rand(B, 1, 1, 1, device=device)
-    interp = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
-    d_interp = critic(interp, labels)
-    grads = torch.autograd.grad(
-        outputs=d_interp,
-        inputs=interp,
-        grad_outputs=torch.ones_like(d_interp),
-        create_graph=True,
-        retain_graph=True,
-    )[0]
-    grads = grads.view(B, -1)
-    return ((grads.norm(2, dim=1) - 1) ** 2).mean()
+from models.gan import Generator, ProjectionDiscriminator
 
 
 # ------------------------------------------------------------------ #
@@ -190,10 +173,12 @@ def train(cfg: Config):
     print(f"FID eval split: {fid_split}  samples={len(fid_loader.dataset)}")
 
     G = Generator(z_dim=cfg.z_dim, num_classes=num_classes).to(device)
-    D = ProjectionCritic(num_classes=num_classes).to(device)
+    D = ProjectionDiscriminator(num_classes=num_classes).to(device)
 
-    opt_G = torch.optim.Adam(G.parameters(), lr=cfg.gan_lr_g, betas=(0.0, 0.9))
-    opt_D = torch.optim.Adam(D.parameters(), lr=cfg.gan_lr_d, betas=(0.0, 0.9))
+    criterion = nn.BCEWithLogitsLoss()
+
+    opt_G = torch.optim.Adam(G.parameters(), lr=cfg.gan_lr_g, betas=(0.5, 0.999))
+    opt_D = torch.optim.Adam(D.parameters(), lr=cfg.gan_lr_d, betas=(0.5, 0.999))
 
     # fixed noise for visual tracking
     n_samples = 24  # 8 per class
@@ -210,63 +195,52 @@ def train(cfg: Config):
     fid_log = []
     best_fid = float("inf")
 
-    global_step = 0
-
     for epoch in range(1, cfg.gan_epochs + 1):
-        d_loss_acc, g_loss_acc, n_batches = 0.0, 0.0, 0
-        d_real_acc, d_fake_acc, gp_acc = 0.0, 0.0, 0.0
+        d_loss_acc, g_loss_acc = 0.0, 0.0
+        d_x_acc, d_gz_acc, n_batches = 0.0, 0.0, 0
 
         for real_imgs, real_labels in train_loader:
             real_imgs = real_imgs.to(device)
             real_labels = real_labels.to(device)
             B = real_imgs.size(0)
 
-            # ---- Train Critic ---- #
-            z = torch.randn(B, cfg.z_dim, device=device)
-            # Keep fake conditioning aligned with the current real batch labels.
-            # This also keeps GP conditioning consistent for interpolated samples.
-            fake_labels = real_labels
-            with torch.no_grad():
-                fake_imgs = G(z, fake_labels)
+            real_targets = torch.ones(B, 1, device=device)
+            fake_targets = torch.zeros(B, 1, device=device)
 
-            d_real = D(real_imgs, real_labels).mean()
-            # Critic must score fake images with their own conditioning labels.
-            d_fake = D(fake_imgs, fake_labels).mean()
-            gp = gradient_penalty(D, real_imgs, fake_imgs, real_labels, device)
-            d_loss = d_fake - d_real + cfg.gp_lambda * gp
+            # ---- Train Discriminator ---- #
+            with torch.no_grad():
+                z = torch.randn(B, cfg.z_dim, device=device)
+                fake_imgs = G(z, real_labels)
+
+            d_real_out = D(real_imgs, real_labels)
+            d_fake_out = D(fake_imgs, real_labels)
+            d_loss = criterion(d_real_out, real_targets) + criterion(d_fake_out, fake_targets)
 
             opt_D.zero_grad()
             d_loss.backward()
             opt_D.step()
 
+            # ---- Train Generator ---- #
+            z = torch.randn(B, cfg.z_dim, device=device)
+            gen_labels = torch.randint(0, num_classes, (B,), device=device)
+            fake_imgs = G(z, gen_labels)
+            g_out = D(fake_imgs, gen_labels)
+            g_loss = criterion(g_out, torch.ones(B, 1, device=device))
+
+            opt_G.zero_grad()
+            g_loss.backward()
+            opt_G.step()
+
             d_loss_acc += d_loss.item()
-            d_real_acc += d_real.item()
-            d_fake_acc += d_fake.item()
-            gp_acc += gp.item()
-
-            # ---- Train Generator every n_critic steps ---- #
-            global_step += 1
-            if global_step % cfg.n_critic == 0:
-                z = torch.randn(B, cfg.z_dim, device=device)
-                gen_labels = torch.randint(0, num_classes, (B,), device=device)
-                fake_imgs = G(z, gen_labels)
-                g_loss = -D(fake_imgs, gen_labels).mean()
-
-                opt_G.zero_grad()
-                g_loss.backward()
-                opt_G.step()
-
-                g_loss_acc += g_loss.item()
-
+            g_loss_acc += g_loss.item()
+            d_x_acc += torch.sigmoid(d_real_out).mean().item()
+            d_gz_acc += torch.sigmoid(g_out).mean().item()
             n_batches += 1
 
-        n_g_updates = max(1, n_batches // cfg.n_critic)
         d_avg = d_loss_acc / n_batches
-        g_avg = g_loss_acc / n_g_updates
-        d_real_avg = d_real_acc / n_batches
-        d_fake_avg = d_fake_acc / n_batches
-        gp_avg = gp_acc / n_batches
-        w_dist = d_real_avg - d_fake_avg
+        g_avg = g_loss_acc / n_batches
+        d_x_avg = d_x_acc / n_batches
+        d_gz_avg = d_gz_acc / n_batches
 
         # FID evaluation
         fid_str = ""
@@ -277,10 +251,8 @@ def train(cfg: Config):
                 "fid": fid,
                 "d_loss": d_avg,
                 "g_loss": g_avg,
-                "d_real": d_real_avg,
-                "d_fake": d_fake_avg,
-                "gp": gp_avg,
-                "w_dist": w_dist,
+                "d_x": d_x_avg,
+                "d_gz": d_gz_avg,
             })
             fid_str = f"  FID: {fid:.2f}"
 
@@ -299,18 +271,16 @@ def train(cfg: Config):
                 "epoch": epoch,
                 "d_loss": d_avg,
                 "g_loss": g_avg,
-                "d_real": d_real_avg,
-                "d_fake": d_fake_avg,
-                "gp": gp_avg,
-                "w_dist": w_dist,
+                "d_x": d_x_avg,
+                "d_gz": d_gz_avg,
             })
 
         print(
             f"[Epoch {epoch:03d}/{cfg.gan_epochs}]  "
             f"D_loss: {d_avg:.4f}  "
             f"G_loss: {g_avg:.4f}  "
-            f"W_dist: {w_dist:.4f}  "
-            f"GP: {gp_avg:.4f}{fid_str}"
+            f"D(x): {d_x_avg:.3f}  "
+            f"D(G(z)): {d_gz_avg:.3f}{fid_str}"
         )
 
         # save samples

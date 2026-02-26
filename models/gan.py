@@ -1,8 +1,8 @@
 """
-cWGAN-GP with Projection Discriminator
----------------------------------------
-Generator  : conditional batch-norm, transposed-conv stack  (z + label → 64×64 RGB)
-Critic     : conv stack + projection (Miyato & Koyama, 2018)
+Conditional GAN (CGAN) with Projection Discriminator
+-----------------------------------------------------
+Generator     : conditional batch-norm, upsample conv stack  (z + label → 64×64 RGB)
+Discriminator : conv stack + projection (Miyato & Koyama, 2018)
 """
 
 import torch
@@ -69,8 +69,8 @@ class Generator(nn.Module):
         return self.to_rgb(h)
 
 
-# ---------- Critic (Projection Discriminator) ---------- #
-class CriticBlock(nn.Module):
+# ---------- Discriminator (Projection) ---------- #
+class DiscriminatorBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, downsample: bool = True):
         super().__init__()
         layers = [
@@ -92,18 +92,19 @@ class CriticBlock(nn.Module):
         return self.main(x) + self.skip(x)
 
 
-class ProjectionCritic(nn.Module):
+class ProjectionDiscriminator(nn.Module):
     """
-    Wasserstein critic with projection conditioning.
-    Output = φ(x)·w  +  (y_embed)·φ(x)  (scalar per sample).
+    Conditional discriminator with projection conditioning.
+    Output = φ(x)·w  +  (y_embed)·φ(x)  (scalar per sample, logit).
+    Pass through BCEWithLogitsLoss — do NOT add sigmoid here.
     """
 
     def __init__(self, num_classes: int = 3, ch: int = 64):
         super().__init__()
-        self.block1 = CriticBlock(3, ch)           # 64→32
-        self.block2 = CriticBlock(ch, ch * 2)      # 32→16
-        self.block3 = CriticBlock(ch * 2, ch * 4)  # 16→8
-        self.block4 = CriticBlock(ch * 4, ch * 8)  # 8→4
+        self.block1 = DiscriminatorBlock(3, ch)           # 64→32
+        self.block2 = DiscriminatorBlock(ch, ch * 2)      # 32→16
+        self.block3 = DiscriminatorBlock(ch * 2, ch * 4)  # 16→8
+        self.block4 = DiscriminatorBlock(ch * 4, ch * 8)  # 8→4
         self.act = nn.LeakyReLU(0.2, inplace=True)
 
         self.linear = nn.Linear(ch * 8, 1)  # unconditional path
@@ -118,6 +119,6 @@ class ProjectionCritic(nn.Module):
         # global sum pooling
         h = h.sum(dim=[2, 3])  # (B, ch*8)
 
-        out = self.linear(h)  # unconditional score
+        out = self.linear(h)  # unconditional logit
         proj = (self.embed(y) * h).sum(dim=1, keepdim=True)  # projection
-        return out + proj
+        return out + proj  # (B, 1) raw logit

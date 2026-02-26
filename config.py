@@ -15,14 +15,12 @@ class Config:
     # Repro
     seed: int = 42
 
-    # GAN (cWGAN-GP)
+    # GAN (CGAN)
     z_dim: int = 128
     gan_batch: int = 64
     gan_epochs: int = 100
     gan_lr_g: float = 1e-4       # generator lr
-    gan_lr_d: float = 2e-4       # critic lr (reduced for more stable critic)
-    n_critic: int = 3            # critic updates per G update
-    gp_lambda: float = 10.0      # gradient penalty coefficient
+    gan_lr_d: float = 2e-4       # discriminator lr
     sample_every: int = 5        # save sample grid every N epochs
     ckpt_every: int = 20         # save checkpoint every N epochs
     fid_every: int = 5           # compute FID every N epochs
