@@ -218,6 +218,7 @@ def train(cfg: Config):
 
             opt_D.zero_grad()
             d_loss.backward()
+            nn.utils.clip_grad_norm_(D.parameters(), max_norm=1.0)
             opt_D.step()
 
             # ---- Train Generator ---- #
@@ -229,6 +230,7 @@ def train(cfg: Config):
 
             opt_G.zero_grad()
             g_loss.backward()
+            nn.utils.clip_grad_norm_(G.parameters(), max_norm=1.0)
             opt_G.step()
 
             d_loss_acc += d_loss.item()
