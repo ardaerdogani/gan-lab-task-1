@@ -1,5 +1,0 @@
-\section{Conclusion}
-
-This report implemented and evaluated an end-to-end synthetic data pipeline: training a CGAN to generate class-conditional fruit images, selecting checkpoints using FID, generating a balanced synthetic pool, and testing its downstream impact on classification across a data-size grid.
-
-The CGAN's intrinsic quality improved over training according to FID, achieving its best value at epoch 140. However, downstream experiments showed that synthetic data alone do not reliably transfer to real test images, and that synthetic augmentation provides only limited benefits in a regime where real-only performance is already near ceiling. The results reinforce a central principle for synthetic data: \textbf{utility must be validated in the target task}, and intrinsic generative metrics should be interpreted as supportive signals rather than final objectives.
