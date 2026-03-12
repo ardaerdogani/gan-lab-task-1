@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCENARIO_ORDER = {"real": 0, "synth": 1, "both": 2}
+SCENARIO_ORDER = {"real": 0, "real_aug": 1, "synth": 2, "both": 3}
 DEFAULT_SPLITS = ("train", "val", "test")
 
 
@@ -98,9 +98,14 @@ def export_clf_results(all_results_json: Path, out_csv: Path) -> list[dict]:
             {
                 "n_per_class": r.get("n_per_class"),
                 "scenario": r.get("scenario"),
+                "augmentation_policy": r.get("augmentation_policy"),
                 "train_size": r.get("train_size"),
                 "test_accuracy": r.get("test_accuracy"),
                 "train_time_sec": r.get("train_time_sec"),
+                "classifier_train_time_sec": r.get("classifier_train_time_sec", r.get("train_time_sec")),
+                "gan_train_time_sec": r.get("gan_train_time_sec", 0.0),
+                "synth_generation_time_sec": r.get("synth_generation_time_sec", 0.0),
+                "pipeline_time_sec": r.get("pipeline_time_sec", r.get("train_time_sec")),
                 "apple_f1": (per_class.get("apple", {}) or {}).get("f1"),
                 "banana_f1": (per_class.get("banana", {}) or {}).get("f1"),
                 "orange_f1": (per_class.get("orange", {}) or {}).get("f1"),
@@ -121,9 +126,14 @@ def export_clf_results(all_results_json: Path, out_csv: Path) -> list[dict]:
             fieldnames=[
                 "n_per_class",
                 "scenario",
+                "augmentation_policy",
                 "train_size",
                 "test_accuracy",
                 "train_time_sec",
+                "classifier_train_time_sec",
+                "gan_train_time_sec",
+                "synth_generation_time_sec",
+                "pipeline_time_sec",
                 "apple_f1",
                 "banana_f1",
                 "orange_f1",
@@ -158,7 +168,7 @@ def print_quick_summary(dataset_rows: list[dict], fid_rows: list[dict], clf_rows
         print("\nClassifier test accuracy (fraction):")
         sizes = sorted({r["n_per_class"] for r in clf_rows}, key=_n_per_class_key)
         lookup = {(r["scenario"], r["n_per_class"]): r for r in clf_rows}
-        scenarios = ["real", "synth", "both"]
+        scenarios = [s for s in ["real", "real_aug", "synth", "both"] if any(r["scenario"] == s for r in clf_rows)]
         header = f"{'Size':>6} | " + " | ".join(f"{s:>7}" for s in scenarios)
         print("  " + header)
         print("  " + "-" * len(header))
@@ -196,4 +206,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

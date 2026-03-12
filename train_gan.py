@@ -11,6 +11,8 @@ CGAN Training Loop
 
 import json
 import random
+import time
+import argparse
 from pathlib import Path
 
 import torch
@@ -109,7 +111,7 @@ def load_inception(device):
 #  Helpers                                                             #
 # ------------------------------------------------------------------ #
 
-def make_loader(cfg: Config, split: str, train: bool):
+def make_loader(cfg: Config, data_root: Path, split: str, train: bool):
     tf_list = [
         transforms.Resize((cfg.img_size, cfg.img_size)),
     ]
@@ -120,7 +122,7 @@ def make_loader(cfg: Config, split: str, train: bool):
         transforms.Normalize([0.5] * 3, [0.5] * 3),
     ])
     tf = transforms.Compose(tf_list)
-    ds = datasets.ImageFolder(str(cfg.data_root / split), transform=tf)
+    ds = datasets.ImageFolder(str(data_root / split), transform=tf)
     loader = DataLoader(
         ds,
         batch_size=cfg.gan_batch,
@@ -147,25 +149,34 @@ def save_samples(G, fixed_z, fixed_y, epoch, out_dir, nrow=8):
 #  Main                                                                #
 # ------------------------------------------------------------------ #
 
-def train(cfg: Config):
+def train(
+    cfg: Config,
+    data_root: str | Path | None = None,
+    fid_root: str | Path | None = None,
+    out_dir: str | Path | None = None,
+):
     device = torch.device(cfg.device if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}")
+
+    data_root = Path(data_root) if data_root is not None else cfg.data_root
+    fid_root = Path(fid_root) if fid_root is not None else data_root
 
     # reproducibility
     torch.manual_seed(cfg.seed)
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
 
-    train_loader, class_names = make_loader(cfg, split="train", train=True)
+    train_loader, class_names = make_loader(cfg, data_root=data_root, split="train", train=True)
     num_classes = len(class_names)
     print(f"Classes ({num_classes}): {class_names}")
+    print(f"GAN train root: {data_root / 'train'}")
 
     fid_split = cfg.fid_eval_split
-    fid_split_path = cfg.data_root / fid_split
+    fid_split_path = fid_root / fid_split
     if not fid_split_path.exists():
         print(f"FID split '{fid_split}' not found, falling back to 'train'.")
         fid_split = "train"
-    fid_loader, fid_classes = make_loader(cfg, split=fid_split, train=False)
+    fid_loader, fid_classes = make_loader(cfg, data_root=fid_root, split=fid_split, train=False)
     if fid_classes != class_names:
         raise RuntimeError(
             f"Class mismatch between train ({class_names}) and {fid_split} ({fid_classes})."
@@ -185,7 +196,7 @@ def train(cfg: Config):
     fixed_z = torch.randn(n_samples, cfg.z_dim, device=device)
     fixed_y = torch.arange(num_classes, device=device).repeat_interleave(n_samples // num_classes)
 
-    out_dir = Path(cfg.out_root) / "gan"
+    out_dir = Path(out_dir) if out_dir is not None else Path(cfg.out_root) / "gan"
     out_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = out_dir / "checkpoints"
     ckpt_dir.mkdir(exist_ok=True)
@@ -194,6 +205,8 @@ def train(cfg: Config):
     inception_model = load_inception(device)
     fid_log = []
     best_fid = float("inf")
+    best_epoch = None
+    start_time = time.time()
 
     for epoch in range(1, cfg.gan_epochs + 1):
         d_loss_acc, g_loss_acc = 0.0, 0.0
@@ -260,6 +273,7 @@ def train(cfg: Config):
 
             if fid < best_fid:
                 best_fid = fid
+                best_epoch = epoch
                 torch.save({
                     "epoch": epoch,
                     "fid": fid,
@@ -303,11 +317,39 @@ def train(cfg: Config):
     with open(out_dir / "train_log.json", "w") as f:
         json.dump(fid_log, f, indent=2)
     print(f"Training finished. Log saved to {out_dir / 'train_log.json'}")
+    train_time_sec = round(time.time() - start_time, 1)
+    summary = {
+        "data_root": str(data_root),
+        "fid_root": str(fid_root),
+        "fid_split": fid_split,
+        "num_classes": num_classes,
+        "train_samples": len(train_loader.dataset),
+        "fid_samples": len(fid_loader.dataset),
+        "train_time_sec": train_time_sec,
+        "best_fid": None if best_fid == float("inf") else round(best_fid, 4),
+        "best_epoch": best_epoch,
+        "out_dir": str(out_dir),
+    }
+    with open(out_dir / "run_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"Run summary saved to {out_dir / 'run_summary.json'}")
     if best_fid < float("inf"):
         print(f"Best FID: {best_fid:.2f} (checkpoint: {ckpt_dir / 'best_fid.pt'})")
-    return G, D
+    return {
+        "G": G,
+        "D": D,
+        "summary": summary,
+    }
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_root", type=str, default=None,
+                        help="Dataset root containing a train/ split for GAN training.")
+    parser.add_argument("--fid_root", type=str, default=None,
+                        help="Dataset root used for FID evaluation (defaults to data_root).")
+    parser.add_argument("--out_dir", type=str, default=None,
+                        help="Output directory for checkpoints, logs, and samples.")
+    args = parser.parse_args()
     cfg = Config()
-    train(cfg)
+    train(cfg, data_root=args.data_root, fid_root=args.fid_root, out_dir=args.out_dir)

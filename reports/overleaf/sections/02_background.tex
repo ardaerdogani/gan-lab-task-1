@@ -1,0 +1,92 @@
+\section{Background \& Related Work}
+
+\subsection{Generative Adversarial Networks (GANs)}
+
+GANs learn a generative model through an adversarial game between a generator \(G\) and a discriminator \(D\). In the original formulation, \(G\) maps random noise \(z\) to a synthetic image \(x = G(z)\), while \(D(x)\) estimates whether \(x\) is real or synthetic. Training is typically based on a minimax objective. In practice, many implementations use a \textbf{non-saturating} generator loss to stabilize gradients.
+
+\subsubsection{Practical training issues}
+
+GAN optimization is well known to be unstable. Common failure modes include:
+\begin{itemize}
+\item \textbf{Mode collapse:} the generator produces limited varieties of images (low diversity) while still fooling the discriminator.
+\item \textbf{Discriminator dominance:} if \(D\) becomes too strong early, the generator gradients can become uninformative.
+\item \textbf{Oscillatory dynamics:} generator and discriminator losses may fluctuate without converging in a simple monotonic way.
+\end{itemize}
+
+To improve stability, practical implementations often rely on architecture choices and heuristics rather than pure objective changes. In this repository's implementation, several pragmatic stabilizers are used:
+\begin{itemize}
+\item Adam with \((\beta_1, \beta_2) = (0.5, 0.999)\),
+\item a slightly higher generator learning rate than discriminator learning rate,
+\item and gradient clipping (\code{max_norm=1.0}) for both networks.
+\end{itemize}
+
+These choices are not theoretically optimal in general, but they are reasonable engineering defaults for DCGAN-style training.
+
+\subsection{Conditional GANs}
+
+Conditional GANs (CGANs) extend the GAN framework by conditioning on a class label \(y\). This enables class-controlled generation \(x = G(z, y)\) and a discriminator \(D(x, y)\) that evaluates authenticity \emph{given the label}. Conditioning can be injected in multiple ways: concatenation, conditional batch normalization, or conditional discriminators.
+
+In the implemented pipeline, conditioning is applied in \textbf{both} networks:
+\begin{itemize}
+\item The generator uses \textbf{conditional batch normalization}, allowing class information to modulate intermediate feature statistics.
+\item The discriminator uses a \textbf{projection term} that aligns image features with a class embedding.
+\end{itemize}
+
+Conditioning both sides is important: if the generator is strongly class-conditioned but the discriminator ignores the label, the generator may be incentivized to ignore the label as well.
+
+\subsection{Projection Discriminator}
+
+A projection discriminator conditions on \(y\) by projecting learned image features onto an embedding of the class label. If \(h(x)\) is the discriminator feature representation, the conditional logit can be written as:
+\[
+D(x, y) = w^\top h(x) + \langle e(y), h(x) \rangle,
+\]
+where \(w\) is an unconditional classifier vector and \(e(y)\) is a learned embedding for class \(y\). This approach is widely used in modern conditional GANs because it provides a strong conditioning mechanism without requiring the discriminator to receive label maps as explicit inputs.
+
+Intuitively, the projection term increases the score when the image features ``look compatible'' with the label embedding. This tends to encourage class-consistent generation without forcing the discriminator to learn a separate classifier head.
+
+\textbf{Note.} Many projection-discriminator implementations also apply \textbf{spectral normalization} to stabilize the discriminator. The current implementation does not include spectral normalization; instead, it relies on learning-rate tuning and gradient clipping.
+
+\subsection{Fréchet Inception Distance (FID)}
+
+FID is a widely used metric for evaluating generative models. It compares real and generated images by embedding them into a feature space (often InceptionV3 features) and approximating each set as a multivariate Gaussian. The distance between these Gaussians is:
+\[
+\mathrm{FID} = \|\mu_r - \mu_g\|_2^2 + \mathrm{Tr}\left(\Sigma_r + \Sigma_g - 2(\Sigma_r \Sigma_g)^{1/2}\right).
+\]
+
+Lower values indicate closer agreement between real and generated feature distributions. Importantly, FID is \textbf{not a task metric}, and it can be sensitive to sample size, preprocessing, and the suitability of the feature extractor for the domain.
+
+\subsubsection{Limitations of FID in this setting}
+
+FID is helpful for monitoring training progress, but several factors limit its interpretability here:
+\begin{itemize}
+\item \textbf{Small evaluation split.} The configured sample count is larger than the available validation images (477), so FID is computed on fewer samples than intended.
+\item \textbf{Domain mismatch of the feature extractor.} InceptionV3 is trained on ImageNet; its feature geometry may not perfectly reflect perceptual similarity for this fruit dataset.
+\item \textbf{Mixture vs per-class distributions.} Computing FID on the union of all classes can hide class-conditional failures (for example, one class collapsing).
+\end{itemize}
+
+For these reasons, the report treats FID as a \emph{supporting signal} and prioritizes downstream evaluation on the real test set.
+
+\subsection{Synthetic Augmentation in Practice}
+
+Synthetic augmentation is most beneficial when:
+\begin{itemize}
+\item The real dataset is small or imbalanced.
+\item The synthetic distribution improves coverage (diversity) rather than memorizing a subset.
+\item The downstream model is robust to synthetic artifacts (or those artifacts are minimal).
+\end{itemize}
+
+In practice, synthetic augmentation competes with (and may complement) strong \emph{classical} augmentation baselines such as geometric transforms and color perturbations. On many vision tasks, classical augmentation can already yield large generalization gains, particularly in low-data regimes. Therefore, a careful evaluation should contextualize any synthetic gains against these baselines.
+
+Another recurring practical lesson is that synthetic augmentation tends to be most reliable when synthetic images are used as \textbf{additional signal} rather than the sole training distribution. Mixed-domain training (real+synthetic) provides an anchor to the real data manifold and reduces the risk that a classifier learns synthetic-specific shortcuts.
+
+This report evaluates synthetic augmentation with both intrinsic (FID) and extrinsic (classification) metrics to quantify whether synthetic images actually help.
+
+\subsection{Evaluating synthetic data for downstream tasks}
+
+When the goal of synthetic generation is to improve a downstream model, the evaluation should match that goal. Two common protocols are:
+\begin{itemize}
+\item \textbf{Train on synthetic, test on real (TSTR).} Measures whether synthetic data can replace real data for training. This is a strict test of domain alignment and is typically difficult to satisfy.
+\item \textbf{Train on real+synthetic, test on real.} Measures whether synthetic data provide incremental signal beyond real training data. This is often the most practical augmentation scenario.
+\end{itemize}
+
+This report includes both perspectives: the \textbf{synthetic-only} scenario corresponds to TSTR, and the \textbf{real+synthetic} scenario corresponds to augmentation. Reporting both is important because a method that fails at TSTR can still help as an augmentor, while a method that appears strong visually may still fail at TSTR due to subtle distribution shifts.

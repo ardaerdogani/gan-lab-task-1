@@ -1,0 +1,234 @@
+\section{Results}
+
+\subsection{GAN intrinsic quality (FID)}
+
+\subsubsection{FID vs epoch}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    width=0.92\linewidth,
+    height=0.45\textheight,
+    xlabel={Epoch},
+    ylabel={FID},
+    grid=both,
+    grid style={line width=.1pt, draw=gray!20},
+    major grid style={line width=.2pt, draw=gray!35},
+    xmin=10, xmax=200,
+    ymin=135, ymax=220,
+    tick label style={font=\small},
+    label style={font=\small}
+]
+\addplot[
+    color=blue!70!black,
+    line width=1.2pt,
+    mark=*,
+    mark size=1.8pt
+] table [x=epoch, y=fid, col sep=comma] {data/gan_fid_by_epoch.csv};
+\addplot[
+    only marks,
+    color=red!75!black,
+    mark=*,
+    mark size=2.8pt
+] coordinates {(140,143.36)};
+\node[anchor=south west, text=red!75!black, font=\small] at (axis cs:140,143.36) {best: epoch 140, FID 143.36};
+\end{axis}
+\end{tikzpicture}
+\caption{FID vs epoch during CGAN training. Lower values indicate closer agreement between real and generated feature distributions.}
+\label{fig:fid-vs-epoch}
+\end{figure}
+
+Selected FID values at key epochs (from \code{reports/tables/gan_fid_by_epoch.csv}) are shown in Table~\ref{tab:selected-fid-values}.
+
+\begin{table}[H]
+\centering
+\caption{Selected FID values at representative checkpoints.}
+\label{tab:selected-fid-values}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Epoch & FID \\
+\midrule
+10 & 212.84 \\
+50 & 189.84 \\
+100 & 149.97 \\
+140 (best) & 143.36 \\
+200 & 153.14 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Interpretation.} The sharp FID decrease from epoch 10 to epoch 140 suggests the generator improves substantially over training. The slight FID increase by epoch 200 indicates either mild overfitting, reduced diversity, or measurement noise due to limited evaluation sample size.
+
+\subsubsection{Qualitative progression (fixed noise, fixed labels)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}[t]{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{gan_samples_epoch0001.png}
+\caption{Epoch 1}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{gan_samples_epoch0050.png}
+\caption{Epoch 50}
+\end{subfigure}
+
+\medskip
+
+\begin{subfigure}[t]{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{gan_samples_epoch0140_bestfid.png}
+\caption{Epoch 140 (best FID)}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{gan_samples_epoch0200.png}
+\caption{Epoch 200}
+\end{subfigure}
+\caption{Qualitative sample progression across GAN training using fixed noise vectors and fixed labels.}
+\label{fig:gan-progression}
+\end{figure}
+
+Qualitative grids provide complementary evidence to FID and help detect failure modes that a single scalar metric may miss.
+
+\subsection{Downstream classification (utility of synthetic data)}
+
+\subsubsection{Accuracy vs training data size}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\linewidth]{accuracy_vs_size.png}
+\caption{Classifier test accuracy as a function of images per class and training scenario.}
+\label{fig:accuracy-vs-size}
+\end{figure}
+
+The central quantitative result is summarized below (test accuracy; higher is better).
+
+\begin{table}[H]
+\centering
+\caption{Test accuracy by training scenario and data size.}
+\label{tab:accuracy-summary}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Images per class (N) & Real only & Synth only & Real + Synth \\
+\midrule
+100 & 98.58\% & 93.16\% & 98.98\% \\
+200 & 99.25\% & 90.72\% & 98.78\% \\
+400 & 98.37\% & 85.37\% & 99.66\% \\
+800 & 99.93\% & 89.43\% & 99.93\% \\
+1300 & 99.93\% & 69.58\% & 99.86\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Observation 1 (Ceiling effect).} Real-only accuracy is already very high at \(N=100\), leaving limited headroom for synthetic augmentation.
+
+\textbf{Observation 2 (Mixed results for augmentation).} Real+synthetic sometimes improves performance (notably at \(N=400\)), but also slightly underperforms real-only at some sizes (for example, \(N=200\)).
+
+\textbf{Observation 3 (Synthetic-only domain gap).} Synthetic-only training does not transfer reliably to the real test set and degrades sharply at \(N=1300\).
+
+\subsubsection{Augmentation effect size (Real+Synth minus Real)}
+
+To highlight where synthetic augmentation helps most, Table~\ref{tab:augmentation-delta} reports \(\Delta\) accuracy in percentage points.
+
+\begin{table}[H]
+\centering
+\caption{Augmentation effect size measured as Real + Synth minus Real.}
+\label{tab:augmentation-delta}
+\begin{tabular}{@{}lc@{}}
+\toprule
+Images per class (N) & Δ Accuracy (Both − Real) \\
+\midrule
+100 & +0.40 pp \\
+200 & −0.47 pp \\
+400 & +1.29 pp \\
+800 & +0.00 pp \\
+1300 & −0.07 pp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The largest observed gain occurs at \textbf{N=400}, suggesting that synthetic images can provide useful additional variability in a mid-data regime. In the largest-data regime, the real model is already saturated, and synthetic augmentation is neutral to slightly negative.
+
+\subsubsection{Computational cost}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\linewidth]{time_vs_size.png}
+\caption{Training time as a function of data size and training scenario.}
+\label{fig:time-vs-size}
+\end{figure}
+
+Training time grows roughly linearly with dataset size, and the \textbf{real+synthetic} scenario is most expensive because it doubles the training set when both subsets are included.
+
+\begin{table}[H]
+\centering
+\caption{Training time in seconds by scenario and data size.}
+\label{tab:training-time}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Images per class (N) & Real time (s) & Synth time (s) & Both time (s) \\
+\midrule
+100 & 23.6 & 19.7 & 31.3 \\
+200 & 30.9 & 31.4 & 54.1 \\
+400 & 53.0 & 53.2 & 98.9 \\
+800 & 98.0 & 97.9 & 188.0 \\
+1300 & 155.1 & 154.3 & 308.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Cost-adjusted view of synthetic augmentation}
+
+Because real+synthetic uses more training data, it also requires substantially more compute. A concise way to summarize the trade-off is to compare real+synthetic against real-only at each data size.
+
+\begin{table}[H]
+\centering
+\caption{Cost-adjusted comparison of Real + Synth versus Real only.}
+\label{tab:cost-adjusted}
+\begin{tabularx}{\linewidth}{@{}l>{\raggedleft\arraybackslash}X>{\raggedleft\arraybackslash}X>{\raggedleft\arraybackslash}X@{}}
+\toprule
+Images per class (N) & Δ Accuracy (Both − Real) & Δ Time (s) (Both − Real) & Time ratio (Both/Real) \\
+\midrule
+100 & +0.40 pp & +7.7 & 1.33× \\
+200 & −0.47 pp & +23.2 & 1.75× \\
+400 & +1.29 pp & +45.9 & 1.87× \\
+800 & +0.00 pp & +90.0 & 1.92× \\
+1300 & −0.07 pp & +153.5 & 1.99× \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+This table suggests that, in the current dataset regime, the compute increase is not consistently rewarded with accuracy gains. The strongest positive trade-off appears at \(N=400\), where a measurable accuracy gain is achieved at roughly 1.9× training time.
+
+\subsubsection{Per-class behavior}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\linewidth]{per_class_f1.png}
+\caption{Per-class F1 at the largest data size setting.}
+\label{fig:per-class-f1}
+\end{figure}
+
+At \(N=1300\), real-only and real+synthetic achieve near-perfect per-class F1, while synthetic-only shows markedly lower F1 across all classes, consistent with the synthetic-to-real domain gap.
+
+For completeness, the synthetic-only per-class metrics at \(N=1300\) are:
+
+\begin{table}[H]
+\centering
+\caption{Synthetic-only per-class metrics at \(N=1300\).}
+\label{tab:synthetic-only-per-class}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Class & Precision & Recall & F1 \\
+\midrule
+apple & 0.5241 & 0.9492 & 0.6753 \\
+banana & 0.9673 & 0.5407 & 0.6936 \\
+orange & 0.9484 & 0.5976 & 0.7332 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These asymmetric precision/recall patterns suggest that the classifier trained on synthetic data learns decision boundaries that do not align well with real image statistics (for example, ``apple'' appears over-predicted with high recall but low precision).

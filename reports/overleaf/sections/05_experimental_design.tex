@@ -1,0 +1,62 @@
+\section{Experimental Design}
+
+\subsection*{5.0 Hypotheses}
+\addcontentsline{toc}{subsection}{5.0 Hypotheses}
+
+Before running experiments, the following hypotheses guide interpretation:
+\begin{itemize}
+\item \textbf{H1 (FID trend).} FID should decrease over training and reach a minimum in mid-to-late epochs, potentially followed by non-monotonic fluctuations.
+\item \textbf{H2 (augmentation utility).} Real+synthetic training should match or slightly improve real-only performance at smaller \(N\), where additional variability can act as a regularizer, but show diminishing returns at large \(N\) due to saturation.
+\item \textbf{H3 (synthetic-only gap).} Synthetic-only training should underperform on the real test set due to synthetic--real distribution shift, even when synthetic images appear visually plausible.
+\end{itemize}
+
+\subsection{Experiment A: GAN training monitoring}
+
+\textbf{Purpose:}
+\begin{enumerate}
+\item Track FID as a coarse intrinsic quality indicator.
+\item Inspect qualitative sample grids to identify mode collapse, artifacts, or class confusion.
+\end{enumerate}
+
+\textbf{Artifacts:}
+\begin{itemize}
+\item \code{runs/gan/train_log.json} (per-epoch losses, and FID every \code{fid_every} epochs)
+\item \code{runs/gan/samples_epochXXXX.png} (fixed-noise qualitative tracking)
+\end{itemize}
+
+\subsection{Experiment B: Downstream data-size study}
+
+\textbf{Purpose:} quantify whether synthetic data improve classification performance as training data vary.
+
+\subsubsection{Scenarios}
+
+\begin{itemize}
+\item \textbf{Real only} (\code{scenario=real}): train on real images only.
+\item \textbf{Synth only} (\code{scenario=synth}): train on synthetic images only.
+\item \textbf{Real + Synth} (\code{scenario=both}): train on the concatenation of real and synthetic (matched counts per class when subsampling).
+\end{itemize}
+
+\subsubsection{Data sizes}
+
+Each run uses \textbf{N images per class}, with:
+\[
+N \in \{100, 200, 400, 800, 1300\}.
+\]
+
+When subsampling is enabled, a deterministic class-balanced subset is selected using \code{seed=42}.
+
+\subsubsection{Evaluation protocol and fairness considerations}
+
+All scenarios are evaluated on the \textbf{same real test split} (\code{data_final/test}). This is important: the synthetic-only scenario is effectively a \textbf{domain transfer} test (train on synthetic, test on real). The real+synthetic scenario tests whether synthetic images provide additional useful signal beyond the real training set.
+
+The training schedule (number of epochs) is held constant across runs. As a result, the total number of optimization steps increases with dataset size and is largest for the real+synthetic scenario (because its dataset is larger). Training time is therefore reported alongside accuracy to make the accuracy--cost trade-off explicit.
+
+\subsubsection{Metrics}
+
+\begin{itemize}
+\item Primary: test accuracy on \code{data_final/test}
+\item Secondary: per-class precision/recall/F1 (from \code{sklearn.metrics.classification_report})
+\item Cost: training time (seconds)
+\end{itemize}
+
+All experiment results are stored as JSON in \code{runs/clf/} and aggregated into \code{runs/clf/all_results.json} (exported to \code{reports/tables/clf_results.csv}).

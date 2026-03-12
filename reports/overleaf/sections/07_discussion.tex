@@ -1,0 +1,64 @@
+\section{Discussion}
+
+\subsection{When and why synthetic data can help}
+
+Synthetic augmentation is most promising when the downstream model suffers from insufficient real data. In this study, the real-only classifier already achieves ≈98.6\% accuracy at \(N=100\), indicating that the task is close to saturation even with relatively little data. This reduces the likelihood that any augmentation method (synthetic or conventional) can deliver large absolute gains.
+
+Nevertheless, the result at \(N=400\) suggests that synthetic images can sometimes act as a regularizer or diversity booster when combined with real data. A plausible explanation is that the additional synthetic samples encourage the classifier to learn features that generalize across more varied appearances, \emph{provided} the synthetic distribution is not too far from the real one.
+
+\subsection{Why synthetic-only training underperforms}
+
+The synthetic-only scenario can fail for several reasons:
+\begin{enumerate}
+\item \textbf{Domain mismatch.} The generator may capture some aspects of fruit appearance but miss others (texture, edges, lighting, or background cues). The classifier may learn synthetic-specific shortcuts.
+\item \textbf{Limited diversity.} Even if images look plausible, the synthetic set may have reduced intra-class variety or repeated patterns, causing poor generalization.
+\item \textbf{Metric mismatch.} FID measures similarity in Inception feature space for the overall distribution and does not guarantee that class-specific discriminative features match those in the real test set.
+\end{enumerate}
+
+The sharp decline in synthetic-only accuracy at \(N=1300\) is especially notable. This indicates that adding more synthetic images does not necessarily improve real-world performance; in fact, it can amplify synthetic biases if the synthetic distribution is systematically different from the real distribution.
+
+\subsection{Relationship between FID and downstream utility}
+
+This work illustrates a key practical lesson: \textbf{improving FID does not guarantee improved downstream performance}, especially for a classifier evaluated on real images.
+
+Possible reasons:
+\begin{itemize}
+\item FID is computed on \textbf{unlabeled mixture distributions}; class-specific quality differences may be hidden.
+\item FID depends on a feature extractor trained on ImageNet; fruit domain features may not align perfectly.
+\item The evaluation split size (477 images) is smaller than the desired sample count, potentially increasing variance.
+\end{itemize}
+
+Therefore, the recommended practice is to treat FID as a \emph{monitoring tool} rather than a definitive performance guarantee, and always include downstream evaluations for the intended use case.
+
+\subsection{Cost--performance trade-off}
+
+The experiment grid reports training time as a proxy for computational cost. Two patterns are clear:
+\begin{itemize}
+\item Training time scales approximately linearly with the number of training examples.
+\item The real+synthetic scenario is consistently the most expensive because it uses more total images.
+\end{itemize}
+
+Given the near-ceiling accuracy of the real-only model at small \(N\), the additional compute required for training with synthetic images may not be justified unless the setting changes (harder dataset, more classes, more realistic backgrounds, or a stricter generalization requirement).
+
+\subsection{Practical recommendations}
+
+Based on the observed results and known synthetic data pitfalls, the following practices are recommended for future iterations:
+\begin{enumerate}
+\item \textbf{Always include a real-only baseline.} Synthetic augmentation should be evaluated as a delta over real-only training, not as a stand-alone method.
+\item \textbf{Prefer mixed-domain training over synthetic-only.} Synthetic-only performance can be misleadingly high on synthetic validation but fail on real test data.
+\item \textbf{Measure uncertainty.} Multi-seed repeats (mean ± std) are essential for claiming reliable improvements.
+\item \textbf{Use multiple metrics.} Combine FID with class-conditional checks and downstream evaluations; consider KID or diversity metrics when possible.
+\item \textbf{Inspect failure cases.} When synthetic-only fails, examine misclassified real images and inspect synthetic artifacts to identify systematic mismatches.
+\end{enumerate}
+
+\subsection{Interpreting the synthetic-only degradation at larger N}
+
+The synthetic-only scenario displays a counterintuitive pattern: accuracy is relatively high at small synthetic dataset sizes (for example, 93.16\% at \(N=100\)) but declines substantially when training on the full synthetic pool (69.58\% at \(N=1300\)). Several mechanisms can produce this behavior without contradicting basic learning theory:
+\begin{enumerate}
+\item \textbf{Amplified shortcut learning.} With more synthetic samples, the classifier can become more confident in synthetic-specific cues (textures, edge artifacts, color statistics) that do not hold for real images. With fewer synthetic samples, the classifier may not fully exploit these shortcuts and may rely on more general features.
+\item \textbf{Style concentration.} If the generator produces a limited set of ``styles'' (even across many samples), increasing dataset size does not increase true diversity; it increases repeated exposure to the same synthetic biases.
+\item \textbf{Optimization interactions.} The training schedule is fixed in epochs. Larger datasets increase the number of gradient updates, which can improve fit to the synthetic distribution while simultaneously worsening transfer to the real domain.
+\item \textbf{Label-conditional mismatches.} Synthetic images may be globally plausible, yet class-discriminative details may be subtly wrong (for example, apple shape vs orange texture). Such mismatches can cause systematic confusion when evaluated on real images.
+\end{enumerate}
+
+These hypotheses motivate follow-up diagnostics such as feature-space nearest-neighbor analysis (real vs synthetic), per-class FID/KID, and saving misclassified test examples for qualitative inspection.

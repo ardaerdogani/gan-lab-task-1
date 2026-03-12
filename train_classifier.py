@@ -1,12 +1,14 @@
 """
-Classification training script — supports 3 scenarios:
+Classification training script — supports 4 scenarios:
   --scenario real    : train on real data only
+  --scenario real_aug: train on real data only with classical augmentation
   --scenario synth   : train on synthetic data only
   --scenario both    : train on real + synthetic combined
 
   --n_per_class N    : limit to N images per class (for data-size experiments)
 
-Returns JSON with accuracy, per-class metrics, and training time.
+Returns JSON with accuracy, per-class metrics, classifier time, and optional
+pipeline overheads (GAN training / synthetic generation).
 """
 
 import argparse
@@ -19,7 +21,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, ConcatDataset
 from torchvision import datasets, transforms
-from sklearn.metrics import classification_report
 
 from config import Config
 from models.classifier import FruitCNN
@@ -29,21 +30,23 @@ from models.classifier import FruitCNN
 #  Dataset helpers                                                     #
 # ------------------------------------------------------------------ #
 
-def get_transform(img_size, train=True):
-    if train:
-        return transforms.Compose([
-            transforms.Resize((img_size, img_size)),
+def get_transform(img_size, train=True, augmentation_policy="none"):
+    tf_list = [transforms.Resize((img_size, img_size))]
+    if train and augmentation_policy == "classical":
+        tf_list.extend([
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(15),
             transforms.ColorJitter(brightness=0.2, contrast=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5] * 3, [0.5] * 3),
         ])
-    return transforms.Compose([
-        transforms.Resize((img_size, img_size)),
+    tf_list.extend([
         transforms.ToTensor(),
         transforms.Normalize([0.5] * 3, [0.5] * 3),
     ])
+    return transforms.Compose(tf_list)
+
+
+def scenario_augmentation_policy(scenario):
+    return "classical" if scenario == "real_aug" else "none"
 
 
 def subsample_dataset(dataset, n_per_class, seed=42):
@@ -60,14 +63,27 @@ def subsample_dataset(dataset, n_per_class, seed=42):
     return Subset(dataset, selected)
 
 
-def build_dataset(cfg, scenario, n_per_class, synth_dir="data_synth"):
-    tf_train = get_transform(cfg.img_size, train=True)
-    tf_test = get_transform(cfg.img_size, train=False)
+def build_dataset(
+    cfg,
+    scenario,
+    n_per_class,
+    synth_dir="data_synth",
+    real_train_root=None,
+    test_root=None,
+):
+    augmentation_policy = scenario_augmentation_policy(scenario)
+    tf_train = get_transform(cfg.img_size, train=True, augmentation_policy=augmentation_policy)
+    tf_test = get_transform(cfg.img_size, train=False, augmentation_policy="none")
 
-    real_train = datasets.ImageFolder(str(cfg.data_root / "train"), transform=tf_train)
-    test_ds = datasets.ImageFolder(str(cfg.data_root / "test"), transform=tf_test)
+    real_train_root = Path(real_train_root) if real_train_root else cfg.data_root / "train"
+    test_root = Path(test_root) if test_root else cfg.data_root / "test"
+
+    real_train = datasets.ImageFolder(str(real_train_root), transform=tf_train)
+    test_ds = datasets.ImageFolder(str(test_root), transform=tf_test)
 
     if scenario == "real":
+        train_ds = subsample_dataset(real_train, n_per_class, cfg.seed) if n_per_class else real_train
+    elif scenario == "real_aug":
         train_ds = subsample_dataset(real_train, n_per_class, cfg.seed) if n_per_class else real_train
     elif scenario == "synth":
         synth_train = datasets.ImageFolder(synth_dir, transform=tf_train)
@@ -83,7 +99,7 @@ def build_dataset(cfg, scenario, n_per_class, synth_dir="data_synth"):
     else:
         raise ValueError(f"Unknown scenario: {scenario}")
 
-    return train_ds, test_ds, real_train.classes
+    return train_ds, test_ds, real_train.classes, augmentation_policy
 
 
 # ------------------------------------------------------------------ #
@@ -120,12 +136,31 @@ def evaluate(model, loader, device):
     return all_preds, all_labels
 
 
-def run(cfg, scenario, n_per_class, synth_dir, out_dir):
+def run(
+    cfg,
+    scenario,
+    n_per_class,
+    synth_dir,
+    out_dir,
+    real_train_root=None,
+    test_root=None,
+    time_breakdown=None,
+    extra_metadata=None,
+):
+    from sklearn.metrics import classification_report
+
     device = torch.device(cfg.device if torch.backends.mps.is_available() else "cpu")
     torch.manual_seed(cfg.seed)
     random.seed(cfg.seed)
 
-    train_ds, test_ds, class_names = build_dataset(cfg, scenario, n_per_class, synth_dir)
+    train_ds, test_ds, class_names, augmentation_policy = build_dataset(
+        cfg,
+        scenario,
+        n_per_class,
+        synth_dir=synth_dir,
+        real_train_root=real_train_root,
+        test_root=test_root,
+    )
 
     _pw = cfg.persistent_workers and cfg.num_workers > 0
     _pf = cfg.prefetch_factor if cfg.num_workers > 0 else None
@@ -158,12 +193,25 @@ def run(cfg, scenario, n_per_class, synth_dir, out_dir):
 
     print(f"  Test accuracy: {test_acc:.4f}  Train time: {train_time:.1f}s")
 
+    time_breakdown = time_breakdown or {}
+    gan_train_time = round(float(time_breakdown.get("gan_train_time_sec", 0.0)), 1)
+    synth_generation_time = round(float(time_breakdown.get("synth_generation_time_sec", 0.0)), 1)
+    pipeline_time = round(train_time + gan_train_time + synth_generation_time, 1)
+
     result = {
         "scenario": scenario,
+        "augmentation_policy": augmentation_policy,
         "n_per_class": n_per_class or "all",
         "train_size": train_size,
         "test_accuracy": round(test_acc, 4),
         "train_time_sec": round(train_time, 1),
+        "classifier_train_time_sec": round(train_time, 1),
+        "gan_train_time_sec": gan_train_time,
+        "synth_generation_time_sec": synth_generation_time,
+        "pipeline_time_sec": pipeline_time,
+        "real_train_root": str(real_train_root or (cfg.data_root / "train")),
+        "test_root": str(test_root or (cfg.data_root / "test")),
+        "synth_dir": str(synth_dir),
         "per_class": {
             name: {
                 "precision": round(report[name]["precision"], 4),
@@ -173,6 +221,8 @@ def run(cfg, scenario, n_per_class, synth_dir, out_dir):
             for name in class_names
         },
     }
+    if extra_metadata:
+        result.update(extra_metadata)
 
     # save result
     out_path = Path(out_dir)
@@ -190,12 +240,32 @@ def run(cfg, scenario, n_per_class, synth_dir, out_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", choices=["real", "synth", "both"], required=True)
+    parser.add_argument("--scenario", choices=["real", "real_aug", "synth", "both"], required=True)
     parser.add_argument("--n_per_class", type=int, default=None,
                         help="Limit training images per class (None = use all)")
     parser.add_argument("--synth_dir", type=str, default="data_synth")
     parser.add_argument("--out_dir", type=str, default="runs/clf")
+    parser.add_argument("--real_train_root", type=str, default=None,
+                        help="Root directory for the real training split.")
+    parser.add_argument("--test_root", type=str, default=None,
+                        help="Root directory for evaluation on real images.")
+    parser.add_argument("--gan_train_time_sec", type=float, default=0.0,
+                        help="Optional GAN training overhead to include in pipeline_time_sec.")
+    parser.add_argument("--synth_generation_time_sec", type=float, default=0.0,
+                        help="Optional synthetic image generation overhead to include in pipeline_time_sec.")
     args = parser.parse_args()
 
     cfg = Config()
-    run(cfg, args.scenario, args.n_per_class, args.synth_dir, args.out_dir)
+    run(
+        cfg,
+        args.scenario,
+        args.n_per_class,
+        args.synth_dir,
+        args.out_dir,
+        real_train_root=args.real_train_root,
+        test_root=args.test_root,
+        time_breakdown={
+            "gan_train_time_sec": args.gan_train_time_sec,
+            "synth_generation_time_sec": args.synth_generation_time_sec,
+        },
+    )

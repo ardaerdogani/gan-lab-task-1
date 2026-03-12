@@ -1,0 +1,88 @@
+\section{Reproducibility}
+\label{app:reproducibility}
+
+This appendix describes how to regenerate the tables and figures used in the report, and how to rerun experiments (assuming the required Python packages are installed).
+
+\subsection{Environment setup}
+
+The repository includes an unpinned dependency list in \code{requirements.txt}. A typical setup is:
+
+\begin{verbatim}
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+\end{verbatim}
+
+\textbf{Apple Silicon note.} The training scripts default to \code{device="mps"} if available; otherwise they fall back to CPU. If MPS is unavailable, set the device in \code{config.py} or rely on the fallback.
+
+\subsection{Regenerate report tables (CSV)}
+
+\begin{verbatim}
+python scripts/export_report_tables.py
+\end{verbatim}
+
+This writes:
+\begin{itemize}
+\item \code{reports/tables/dataset_summary.csv}
+\item \code{reports/tables/gan_fid_by_epoch.csv}
+\item \code{reports/tables/clf_results.csv}
+\end{itemize}
+
+\subsection{Regenerate the FID plot (SVG)}
+
+\begin{verbatim}
+python scripts/plot_fid_svg.py
+\end{verbatim}
+
+This writes:
+\begin{itemize}
+\item \code{reports/figures/fid_vs_epoch.svg}
+\end{itemize}
+
+\subsection{Train the CGAN}
+
+\begin{verbatim}
+python train_gan.py
+\end{verbatim}
+
+Outputs:
+\begin{itemize}
+\item \code{runs/gan/train_log.json}
+\item \code{runs/gan/samples_epoch*.png}
+\item \code{runs/gan/checkpoints/*.pt}
+\end{itemize}
+
+\subsection{Generate a synthetic image pool}
+
+Choose a generator checkpoint (for example, the best-FID checkpoint):
+
+\begin{verbatim}
+python scripts/generate_synth.py --ckpt runs/gan/checkpoints/best_fid.pt --n_per_class 1300 --out_dir data_synth
+\end{verbatim}
+
+Outputs:
+\begin{itemize}
+\item \code{data_synth/apple/*.png}
+\item \code{data_synth/banana/*.png}
+\item \code{data_synth/orange/*.png}
+\end{itemize}
+
+\subsection{Run the classifier experiments}
+
+Single run (example):
+
+\begin{verbatim}
+python train_classifier.py --scenario both --n_per_class 400 --synth_dir data_synth --out_dir runs/clf
+\end{verbatim}
+
+Full grid (all sizes, all scenarios):
+
+\begin{verbatim}
+python scripts/run_experiments.py
+\end{verbatim}
+
+Plot classifier results (requires matplotlib):
+
+\begin{verbatim}
+python scripts/plot_results.py --results runs/clf/all_results.json --out_dir runs/clf/plots
+\end{verbatim}

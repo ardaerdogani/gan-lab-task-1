@@ -1,0 +1,32 @@
+\section{Introduction}
+
+Deep learning systems often benefit from large labeled datasets, but real-world data collection and labeling are expensive, time-consuming, and sometimes constrained by privacy or access. \textbf{Synthetic data generation} offers a potential remedy: if a generative model can produce images that resemble the real distribution, these images can be used to train or augment downstream models.
+
+However, synthetic augmentation is not guaranteed to help. Even visually plausible images may encode artifacts that a classifier can exploit in training but which do not exist at test time, causing poor generalization. Therefore, any synthetic pipeline should be evaluated not only with intrinsic image metrics (for example, FID) but also with \textbf{task-based evaluations} such as downstream accuracy and per-class performance.
+
+This work focuses on a small, controlled classification task (three fruits) to study:
+\begin{enumerate}
+\item Whether a CGAN can learn a class-conditional distribution for apples, bananas, and oranges.
+\item How the generator's training dynamics relate to an intrinsic quality measure (FID).
+\item Whether synthetic data improve classification performance under limited real data.
+\end{enumerate}
+
+\textbf{Scope.} The report is an engineering-focused empirical study using the existing repository code and outputs (training logs and plots under \code{runs/}). The goal is not to claim state-of-the-art results, but to provide a rigorous, thesis-level analysis of the implemented pipeline, its results, and its limitations.
+
+\subsection{Research questions}
+
+To keep the evaluation decision-oriented, the study is organized around the following research questions (RQs):
+\begin{itemize}
+\item \textbf{RQ1 (Generative quality).} Does the implemented CGAN learn a non-trivial class-conditional image distribution, as evidenced by improving FID and qualitatively improving sample grids during training?
+\item \textbf{RQ2 (Downstream utility).} When training data are limited, does adding synthetic images improve classifier generalization on a real test set compared to training on real data alone?
+\item \textbf{RQ3 (Metric--utility alignment).} Do improvements in intrinsic generative metrics (FID) correspond to improvements in downstream classification utility, and under what conditions do they diverge?
+\end{itemize}
+
+\subsection{Contributions}
+
+Although the dataset and models are intentionally small, the pipeline is complete and empirically evaluated. The main contributions are:
+\begin{itemize}
+\item An end-to-end implementation of \textbf{conditional image synthesis} using a projection-discriminator CGAN (\code{models/gan.py}, \code{train_gan.py}).
+\item A \textbf{reproducible experiment grid} for measuring downstream impact across data sizes and training scenarios (\code{train_classifier.py}, \code{scripts/run_experiments.py}).
+\item A self-contained report bundle with \textbf{copied figures} and \textbf{exported CSV tables} under \code{reports/}, plus stdlib-only scripts to regenerate the report artifacts.
+\end{itemize}

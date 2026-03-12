@@ -1,0 +1,31 @@
+\section{Limitations}
+
+This report is intended to be rigorous, but several limitations affect the strength and generality of conclusions.
+
+\subsection{Internal validity (experimental uncertainty)}
+
+\begin{itemize}
+\item \textbf{Single-seed evaluation.} GAN training and classifier training use one random seed (\code{seed=42}). Given the known variance of GAN training dynamics, multi-seed evaluation is necessary for statistically robust claims.
+\item \textbf{No confidence intervals.} Accuracy and FID are reported as point estimates. Without repeated trials, it is unclear whether small differences (for example, ±0.5 percentage points) are meaningful.
+\end{itemize}
+
+\subsection{Construct validity (are we measuring the right things?)}
+
+\begin{itemize}
+\item \textbf{FID is an imperfect proxy.} FID is computed on a limited validation set and uses an ImageNet-pretrained feature extractor. It does not directly measure class-conditional correctness or utility for classification.
+\item \textbf{Mixture-level evaluation.} FID is computed on the mixture of all classes rather than per-class; class-specific failures may be hidden.
+\end{itemize}
+
+\subsection{External validity (generalization to other settings)}
+
+\begin{itemize}
+\item \textbf{Dataset simplicity.} The real-only classifier reaches near-ceiling performance at small \(N\), limiting the observable benefit of augmentation. On harder datasets, synthetic augmentation effects could differ.
+\item \textbf{Few classes and low resolution.} Only three classes at 64×64 are studied. Conclusions may not transfer to higher-resolution or higher-class-count problems.
+\end{itemize}
+
+\subsection{Methodological coverage}
+
+\begin{itemize}
+\item \textbf{Single generative model family.} Only one CGAN architecture is evaluated. Stronger baselines (for example, ADA-style training or style-based generators) may alter the synthetic-only gap and augmentation benefits.
+\item \textbf{No explicit domain alignment.} The pipeline does not include techniques that reduce synthetic--real shift (domain adaptation, feature alignment, or discriminator guidance targeted at downstream features).
+\end{itemize}

@@ -1,0 +1,20 @@
+\section{Future Work}
+
+\begin{enumerate}
+\item \textbf{Multi-seed robustness.} Repeat the full grid across multiple seeds and report mean ± std for accuracy and FID.
+\item \textbf{Stronger generative baselines.} Evaluate more modern methods (for example, StyleGAN2 with ADA) and compare against the current CGAN.
+\item \textbf{Per-class evaluation.} Compute FID per class and analyze which class drives synthetic-only failures (for example, apples vs bananas).
+\item \textbf{Alternative metrics.} Add KID and diversity-sensitive measures; consider classifier-based precision/recall for generative models.
+\item \textbf{Better synthetic--real alignment.} Explore domain adaptation, feature matching, or training classifiers with mixed-domain regularization.
+\item \textbf{Human or task-specific evaluations.} For practical deployments, evaluate whether synthetic data improve robustness to nuisance factors (lighting, backgrounds).
+\end{enumerate}
+
+Additional concrete extensions that would strengthen the scientific quality of the study include:
+
+\begin{enumerate}
+\setcounter{enumi}{6}
+\item \textbf{Checkpoint--utility sweep.} Instead of selecting a single best-FID checkpoint, generate synthetic pools from multiple epochs (for example, 50/100/140/200) and measure downstream utility to empirically test FID--utility alignment.
+\item \textbf{Augmentation baselines.} Compare synthetic augmentation against strong classical baselines (RandAugment, MixUp/CutMix) to contextualize gains.
+\item \textbf{Error analysis.} Save confusion matrices and example misclassifications to diagnose whether errors are due to specific classes, lighting, or pose.
+\item \textbf{Diversity diagnostics.} Measure intra-class diversity in the synthetic pool (nearest-neighbor distances in feature space) to detect memorization or repeated patterns.
+\end{enumerate}
