@@ -2,37 +2,54 @@
 
 This repository evaluates whether a conditional GAN can generate useful synthetic fruit images for downstream classification when real labeled data are limited.
 
-The project is now notebook-first. Training, synthetic generation, Task 1 experiments, report exports, and output archiving are all driven from `notebooks/`.
+The project is notebook-first, but the workflow is now split into two clear paths:
 
-## Notebook Workflow
+- a manual modular path built around `01 -> 02 -> 03 -> 04 -> 05`
+- an optional batch runner for the full Task 1 sweep
 
-Run the notebooks in this order:
+## Notebook Workflows
+
+### Manual Modular Workflow
+
+Use this when you want step-by-step control:
 
 1. `notebooks/01_data_setup.ipynb`
 2. `notebooks/02_train_gan.ipynb`
 3. `notebooks/03_generate_synthetic_data.ipynb`
 4. `notebooks/04_classifier_experiments.ipynb`
-5. `notebooks/05_task1_pipeline_and_results.ipynb`
-6. `notebooks/06_report_exports_and_archiving.ipynb`
+5. `notebooks/05_task1_results_and_analysis.ipynb`
 
-What each notebook covers:
+What each notebook does:
 
-- `01_data_setup.ipynb` prepares or inspects the dataset layout.
-- `02_train_gan.ipynb` trains the CGAN and records FID over time.
-- `03_generate_synthetic_data.ipynb` generates balanced synthetic image pools from a trained generator.
-- `04_classifier_experiments.ipynb` runs standalone classifier baselines.
-- `05_task1_pipeline_and_results.ipynb` runs the fair Task 1 pipeline end to end.
-- `06_report_exports_and_archiving.ipynb` regenerates report tables, the FID SVG, and optional archives.
+- `01_data_setup.ipynb`: inspect dataset structure and sample counts
+- `02_train_gan.ipynb`: train one GAN run
+- `03_generate_synthetic_data.ipynb`: generate one synthetic dataset from a checkpoint
+- `04_classifier_experiments.ipynb`: run one classifier setup or a small grid
+- `05_task1_results_and_analysis.ipynb`: analyze saved results and generate plots
+
+### Optional Batch Workflow
+
+Use this when you want the full Task 1 sweep across multiple dataset sizes:
+
+1. `notebooks/01_data_setup.ipynb`
+2. `notebooks/06_task1_batch_runner.ipynb`
+3. `notebooks/05_task1_results_and_analysis.ipynb`
+4. `notebooks/07_report_exports_and_archiving.ipynb`
+
+Notes:
+
+- `06_task1_batch_runner.ipynb` automates the same train-generate-classify loop as `02 -> 03 -> 04`
+- `07_report_exports_and_archiving.ipynb` is only for exporting report tables, generating the FID SVG, and archiving outputs
 
 ## Task 1 Coverage
 
-The notebook pipeline is set up for the corrected Task 1 comparison:
+The Task 1 workflow supports:
 
-- the GAN can be retrained separately for each data budget
-- the synthetic pool is generated from the matching real-data budget
-- `real`, `synth`, and `both` are evaluated without classical augmentation
-- `real_aug` remains available as the optional non-generative baseline
-- reported pipeline cost can include GAN training and synthetic image generation
+- retraining the GAN separately for each data budget
+- generating the synthetic pool from the matching real-data budget
+- evaluating `real`, `synth`, and `both` without classical augmentation
+- keeping `real_aug` as the optional non-generative baseline
+- tracking classifier-only time and full pipeline time
 
 ## Repository Structure
 
@@ -47,8 +64,9 @@ gan-lab/
 │   ├── 02_train_gan.ipynb
 │   ├── 03_generate_synthetic_data.ipynb
 │   ├── 04_classifier_experiments.ipynb
-│   ├── 05_task1_pipeline_and_results.ipynb
-│   ├── 06_report_exports_and_archiving.ipynb
+│   ├── 05_task1_results_and_analysis.ipynb
+│   ├── 06_task1_batch_runner.ipynb
+│   ├── 07_report_exports_and_archiving.ipynb
 │   └── README.md
 ├── data_final/
 ├── data_splits/
@@ -105,8 +123,8 @@ pip install -r requirements.txt
 
 Notes:
 
-- On Apple Silicon, the config prefers `mps` when available.
-- For notebook use, install a notebook environment separately if needed, for example `jupyterlab` and `ipykernel`.
+- `Config` now resolves device automatically in the order `cuda -> mps -> cpu`
+- for notebook use, install a notebook environment separately if needed, for example `jupyterlab` and `ipykernel`
 
 ## Generated Outputs
 
@@ -137,6 +155,6 @@ The remaining `.py` files are shared code without notebook duplicates:
 
 ## Notes
 
-- The correct notebook extension is `.ipynb`.
-- Each notebook resets the working directory to the repo root.
-- Generated outputs are intentionally ignored by Git to keep the repository clean between runs.
+- The correct notebook extension is `.ipynb`
+- Each notebook resets the working directory to the repo root
+- Generated outputs are intentionally ignored by Git to keep the repository clean between runs
