@@ -1,11 +1,25 @@
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Notebook
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
 
 # OS / editor
 .DS_Store
+**/.DS_Store
 .vscode/
+.idea/
 
 # Generated artifacts (keep report outputs in reports/)
 data_synth/

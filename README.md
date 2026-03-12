@@ -54,15 +54,16 @@ The full thesis-style write-up is available at [reports/report.md](reports/repor
 ```text
 gan-lab/
 ├── config.py
-├── train_gan.py
-├── train_classifier.py
 ├── models/
 │   ├── gan.py
 │   └── classifier.py
+├── notebooks/
+│   ├── 01_data_setup.ipynb
+│   ├── 02_train_gan.ipynb
+│   ├── 03_generate_synthetic_data.ipynb
+│   ├── 04_classifier_experiments.ipynb
+│   └── 05_task1_pipeline_and_results.ipynb
 ├── scripts/
-│   ├── generate_synth.py
-│   ├── run_experiments.py
-│   ├── plot_results.py
 │   ├── export_report_tables.py
 │   └── plot_fid_svg.py
 ├── data_final/
@@ -150,7 +151,7 @@ Notes:
 
 ## Notebook Entry Points
 
-If you want a notebook-first workflow, use `notebooks/` as the front door and keep the `.py` files as the source of truth:
+Use `notebooks/` as the front door for all interactive work:
 
 - `notebooks/01_data_setup.ipynb`
 - `notebooks/02_train_gan.ipynb`
@@ -158,11 +159,11 @@ If you want a notebook-first workflow, use `notebooks/` as the front door and ke
 - `notebooks/04_classifier_experiments.ipynb`
 - `notebooks/05_task1_pipeline_and_results.ipynb`
 
-Those notebooks wrap the existing training and experiment code instead of duplicating it.
+These notebooks now contain the training and experiment workflow directly. The remaining Python files are only shared configuration, model definitions, or report utilities with no notebook counterpart.
 
 ## Reproducing the Pipeline
 
-### Recommended: Corrected Task 1 Pipeline
+### Recommended Notebook Workflow
 
 This is the end-to-end workflow that addresses the missing Task 1 pieces:
 
@@ -172,9 +173,13 @@ This is the end-to-end workflow that addresses the missing Task 1 pieces:
 - `real_aug` is available as the optional non-generative baseline
 - reported pipeline cost includes GAN training and synthetic image generation
 
-```bash
-python scripts/run_task1_pipeline.py --include_real_aug
-```
+Run the notebooks in order:
+
+1. `notebooks/01_data_setup.ipynb`
+2. `notebooks/02_train_gan.ipynb`
+3. `notebooks/03_generate_synthetic_data.ipynb`
+4. `notebooks/04_classifier_experiments.ipynb`
+5. `notebooks/05_task1_pipeline_and_results.ipynb`
 
 This writes:
 
@@ -184,49 +189,7 @@ This writes:
 - `runs/task1/clf/all_results.json`
 - `runs/task1/pipeline_summary.json`
 
-### Legacy / Component-Level Commands
-
-#### 1. Train the GAN
-
-```bash
-python train_gan.py \
-  --data_root data_final \
-  --fid_root data_final \
-  --out_dir runs/gan
-```
-
-This produces:
-
-- `runs/gan/train_log.json`
-- `runs/gan/samples_epoch*.png`
-- `runs/gan/checkpoints/*.pt`
-
-#### 2. Generate Synthetic Images
-
-```bash
-python scripts/generate_synth.py \
-  --ckpt runs/gan/checkpoints/best_fid.pt \
-  --n_per_class 1300 \
-  --out_dir data_synth
-```
-
-#### 3. Run the Classifier Experiment Grid
-
-```bash
-python scripts/run_experiments.py --include_real_aug
-```
-
-By default this classifier-only grid reuses the provided synthetic pool. For fair per-size Task 1 comparisons, prefer `scripts/run_task1_pipeline.py`.
-
-#### 4. Plot Classifier Results
-
-```bash
-python scripts/plot_results.py \
-  --results runs/clf/all_results.json \
-  --out_dir runs/clf/plots
-```
-
-#### 5. Export Report Tables and Figures
+### Report Utility Commands
 
 ```bash
 python scripts/export_report_tables.py
@@ -239,16 +202,11 @@ These commands regenerate:
 - `reports/tables/gan_fid_by_epoch.csv`
 - `reports/tables/clf_results.csv`
 - `reports/figures/fid_vs_epoch.svg`
+## Remaining Python Files
 
-## Main Scripts
-
-- `train_gan.py` - trains the CGAN, saves checkpoints and sample grids, computes FID
-- `train_classifier.py` - trains and evaluates the classifier for `real`, `real_aug`, `synth`, or `both`
-- `scripts/create_task1_splits.py` - builds deterministic per-class real-data subsets for fair Task 1 experiments
-- `scripts/generate_synth.py` - generates the synthetic image pool from a checkpoint
-- `scripts/run_experiments.py` - runs the classifier grid across data sizes
-- `scripts/run_task1_pipeline.py` - runs the corrected end-to-end Task 1 workflow per data size
-- `scripts/plot_results.py` - plots accuracy, classifier time, or full pipeline cost
+- `config.py` - shared hyperparameters and path defaults
+- `models/gan.py` - generator and projection discriminator definitions
+- `models/classifier.py` - classifier architecture definition
 - `scripts/export_report_tables.py` - exports CSV tables for the written report
 - `scripts/plot_fid_svg.py` - generates the SVG FID plot for the report
 

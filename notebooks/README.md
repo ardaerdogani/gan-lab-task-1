@@ -1,6 +1,6 @@
 # Notebook Workflow
 
-This folder gives the project a notebook-first entry point without replacing the core Python code.
+This folder is now the primary workflow for the project.
 
 Order:
 
@@ -13,8 +13,8 @@ Order:
 Why this layout:
 
 - notebooks are better for explanation, inline plots, and report-ready exploration
-- `.py` files remain the source of truth for training logic and reproducibility
-- the notebooks import or call the existing scripts instead of re-implementing them
+- the notebooks now contain the training and experiment entrypoints directly
+- only shared config/model files and report utilities remain as `.py`
 
 Notes:
 
