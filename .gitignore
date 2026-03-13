@@ -24,4 +24,3 @@ env/
 # Generated artifacts (keep report outputs in reports/)
 data_synth/
 runs/
-archives/

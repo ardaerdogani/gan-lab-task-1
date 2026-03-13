@@ -34,12 +34,12 @@ Use this when you want the full Task 1 sweep across multiple dataset sizes:
 1. `notebooks/01_data_setup.ipynb`
 2. `notebooks/06_task1_batch_runner.ipynb`
 3. `notebooks/05_task1_results_and_analysis.ipynb`
-4. `notebooks/07_report_exports_and_archiving.ipynb`
+4. `notebooks/07_report_exports.ipynb`
 
 Notes:
 
 - `06_task1_batch_runner.ipynb` automates the same train-generate-classify loop as `02 -> 03 -> 04`
-- `07_report_exports_and_archiving.ipynb` is only for exporting report tables, generating the FID SVG, and archiving outputs
+- `07_report_exports.ipynb` is only for exporting report tables and generating the FID SVG
 
 ## Task 1 Coverage
 
@@ -66,11 +66,10 @@ gan-lab/
 │   ├── 04_classifier_experiments.ipynb
 │   ├── 05_task1_results_and_analysis.ipynb
 │   ├── 06_task1_batch_runner.ipynb
-│   ├── 07_report_exports_and_archiving.ipynb
+│   ├── 07_report_exports.ipynb
 │   └── README.md
 ├── data_final/
 ├── data_splits/
-├── archives/
 └── requirements.txt
 ```
 
