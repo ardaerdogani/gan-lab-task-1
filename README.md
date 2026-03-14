@@ -2,44 +2,27 @@
 
 This repository evaluates whether a conditional GAN can generate useful synthetic fruit images for downstream classification when real labeled data are limited.
 
-The project is notebook-first, but the workflow is now split into two clear paths:
-
-- a manual modular path built around `01 -> 02 -> 03 -> 04 -> 05`
-- an optional batch runner for the full Task 1 sweep
+The project is notebook-first, and the workflow now runs through four sequential notebooks.
 
 ## Notebook Workflows
 
-### Manual Modular Workflow
-
 Use this when you want step-by-step control:
 
-1. `notebooks/01_data_setup.ipynb`
-2. `notebooks/02_train_gan.ipynb`
-3. `notebooks/03_generate_synthetic_data.ipynb`
-4. `notebooks/04_classifier_experiments.ipynb`
-5. `notebooks/05_task1_results_and_analysis.ipynb`
+1. `notebooks/01_data_setup_and_train_gan.ipynb`
+2. `notebooks/02_generate_synthetic_data_and_classifier_experiments.ipynb`
+3. `notebooks/03_task1_results_and_analysis.ipynb`
+4. `notebooks/04_report_exports.ipynb`
 
 What each notebook does:
 
-- `01_data_setup.ipynb`: inspect dataset structure and sample counts
-- `02_train_gan.ipynb`: train one GAN run
-- `03_generate_synthetic_data.ipynb`: generate one synthetic dataset from a checkpoint
-- `04_classifier_experiments.ipynb`: run one classifier setup or a small grid
-- `05_task1_results_and_analysis.ipynb`: analyze saved results and generate plots
-
-### Optional Batch Workflow
-
-Use this when you want the full Task 1 sweep across multiple dataset sizes:
-
-1. `notebooks/01_data_setup.ipynb`
-2. `notebooks/06_task1_batch_runner.ipynb`
-3. `notebooks/05_task1_results_and_analysis.ipynb`
-4. `notebooks/07_report_exports.ipynb`
+- `01_data_setup_and_train_gan.ipynb`: inspect dataset structure, preview real images, and train one GAN run
+- `02_generate_synthetic_data_and_classifier_experiments.ipynb`: generate one synthetic dataset from a checkpoint and then run one classifier setup or a small grid
+- `03_task1_results_and_analysis.ipynb`: analyze saved results and generate plots
+- `04_report_exports.ipynb`: export report tables and generate the FID SVG figure
 
 Notes:
 
-- `06_task1_batch_runner.ipynb` automates the same train-generate-classify loop as `02 -> 03 -> 04`
-- `07_report_exports.ipynb` is only for exporting report tables and generating the FID SVG
+- `04_report_exports.ipynb` is optional if you only need analysis outputs and not export artifacts
 
 ## Task 1 Coverage
 
@@ -60,13 +43,10 @@ gan-lab/
 │   ├── gan.py
 │   └── classifier.py
 ├── notebooks/
-│   ├── 01_data_setup.ipynb
-│   ├── 02_train_gan.ipynb
-│   ├── 03_generate_synthetic_data.ipynb
-│   ├── 04_classifier_experiments.ipynb
-│   ├── 05_task1_results_and_analysis.ipynb
-│   ├── 06_task1_batch_runner.ipynb
-│   ├── 07_report_exports.ipynb
+│   ├── 01_data_setup_and_train_gan.ipynb
+│   ├── 02_generate_synthetic_data_and_classifier_experiments.ipynb
+│   ├── 03_task1_results_and_analysis.ipynb
+│   ├── 04_report_exports.ipynb
 │   └── README.md
 ├── data_final/
 ├── data_splits/
