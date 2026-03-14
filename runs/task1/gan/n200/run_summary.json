@@ -1,0 +1,12 @@
+{
+  "data_root": "/home/arderd/gan-lab-task-1/data_splits/task1/n200",
+  "fid_root": "/home/arderd/gan-lab-task-1/data_final",
+  "fid_split": "val",
+  "num_classes": 3,
+  "train_samples": 600,
+  "fid_samples": 477,
+  "train_time_sec": 592.8,
+  "best_fid": 172.0451,
+  "best_epoch": 190,
+  "out_dir": "/home/arderd/gan-lab-task-1/runs/task1/gan/n200"
+}

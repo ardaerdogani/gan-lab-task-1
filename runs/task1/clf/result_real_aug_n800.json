@@ -1,0 +1,35 @@
+{
+  "scenario": "real_aug",
+  "augmentation_policy": "classical",
+  "n_per_class": 800,
+  "train_size": 2400,
+  "test_accuracy": 0.9986,
+  "train_time_sec": 28.4,
+  "classifier_train_time_sec": 28.4,
+  "gan_train_time_sec": 0.0,
+  "synth_generation_time_sec": 0.0,
+  "pipeline_time_sec": 28.4,
+  "real_train_root": "/home/arderd/gan-lab-task-1/data_splits/task1/n800/train",
+  "test_root": "/home/arderd/gan-lab-task-1/data_final/test",
+  "synth_dir": "/home/arderd/gan-lab-task-1/runs/task1/synth/n800",
+  "per_class": {
+    "apple": {
+      "precision": 1.0,
+      "recall": 0.9959,
+      "f1": 0.998
+    },
+    "banana": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "orange": {
+      "precision": 0.996,
+      "recall": 1.0,
+      "f1": 0.998
+    }
+  },
+  "generator_train_n_per_class": 800,
+  "synthetic_pool_n_per_class": 800,
+  "task1_fair_pipeline": true
+}

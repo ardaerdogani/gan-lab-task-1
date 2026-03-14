@@ -1,26 +1,92 @@
-# Python
-__pycache__/
-**/__pycache__/
-*.py[cod]
-*.pyo
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# =========================
 
-# Notebook
-.ipynb_checkpoints/
+# Python
+
+# =========================
+
+**pycache**/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+
+# =========================
 
 # Virtual environments
-.venv/
-venv/
-env/
 
-# OS / editor
+# =========================
+
+venv/
+.env/
+.venv/
+
+# =========================
+
+# Jupyter
+
+# =========================
+
+.ipynb_checkpoints
+
+# =========================
+
+# ML / Data files
+
+# =========================
+
+data/
+datasets/
+data_splits/
+*.csv
+*.tsv
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pt
+*.pth
+*.ckpt
+
+# =========================
+
+# Logs / outputs
+
+# =========================
+
+logs/
+outputs/
+results/
+wandb/
+tensorboard/
+
+# =========================
+
+# System files
+
+# =========================
+
 .DS_Store
-**/.DS_Store
+Thumbs.db
+
+# =========================
+
+# IDE
+
+# =========================
+
 .vscode/
 .idea/
 
-# Generated artifacts (keep report outputs in reports/)
-data_synth/
-runs/
+# =========================
+
+# Jupyter server / cache
+
+# =========================
+
+.cache/
+.jupyter/
+.local/
+.nv/

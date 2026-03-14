@@ -1,0 +1,12 @@
+{
+  "checkpoint": "/home/arderd/gan-lab-task-1/runs/task1/gan/n400/checkpoints/best_fid.pt",
+  "out_dir": "/home/arderd/gan-lab-task-1/runs/task1/synth/n400",
+  "n_per_class": 400,
+  "counts": {
+    "apple": 400,
+    "banana": 400,
+    "orange": 400
+  },
+  "seed": 42,
+  "generate_time_sec": 1.5
+}
