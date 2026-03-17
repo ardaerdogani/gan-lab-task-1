@@ -27,6 +27,7 @@ What each notebook does:
 - `device="auto"` prefers CUDA, then MPS, then CPU
 - On multi-GPU CUDA systems, `device="auto"` selects the visible GPU with the most free memory
 - `cuda_min_free_gib=4.0` fails early if the selected CUDA device is already too full for a new stage
+- `cpu_fallback_when_cuda_busy=False` keeps long CUDA jobs from silently falling back to a much slower CPU run
 - `pin_memory` is auto-enabled on CUDA unless explicitly overridden
 - `allow_tf32=True` enables TensorFloat-32 math on CUDA for faster H100/A100-class runs
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set by default unless you already exported your own allocator config
@@ -136,6 +137,14 @@ CUDA_MIN_FREE_GIB_OVERRIDE = 1.5
 ```
 
 Use that cautiously: it lowers the start threshold and may let a crowded GPU run, but it also increases the chance of a later CUDA OOM.
+
+If the shared GPUs stay full and you still want the notebooks to proceed, enable the notebook override:
+
+```python
+CPU_FALLBACK_WHEN_CUDA_BUSY = True
+```
+
+That fallback is much slower, so it is best used for smoke tests or when you explicitly want progress over speed.
 
 ### Generic Install
 

@@ -143,6 +143,8 @@ def run_stage_with_device_fallback(
     stage_fn: Any,
 ) -> Dict[str, Any]:
     candidates = get_execution_device_candidates(cfg)
+    if cfg.cpu_fallback_when_cuda_busy and "cpu" not in candidates:
+        candidates.append("cpu")
     last_retryable_error: RuntimeError | None = None
 
     for attempt_index, candidate in enumerate(candidates, start=1):
@@ -152,20 +154,25 @@ def run_stage_with_device_fallback(
             return stage_fn(stage_cfg, device, runtime_summary)
         except RuntimeError as exc:
             clear_torch_memory()
-            can_retry = (
-                candidate.startswith("cuda")
-                and cfg.device.lower() in {"auto", "cuda"}
-                and attempt_index < len(candidates)
-                and (_is_cuda_oom(exc) or _is_runtime_headroom_error(exc))
+            next_candidates = candidates[attempt_index:]
+            can_retry = candidate.startswith("cuda") and cfg.device.lower() in {"auto", "cuda"} and (
+                (_is_cuda_oom(exc) or _is_runtime_headroom_error(exc)) and bool(next_candidates)
             )
             if not can_retry:
                 raise
 
             last_retryable_error = exc
-            print(
-                f"[{stage_label}] {candidate} unavailable ({exc}). "
-                "Retrying on the next visible CUDA device..."
-            )
+            next_target = next_candidates[0]
+            if next_target == "cpu":
+                print(
+                    f"[{stage_label}] {candidate} unavailable ({exc}). "
+                    "Falling back to CPU because all visible CUDA devices are busy."
+                )
+            else:
+                print(
+                    f"[{stage_label}] {candidate} unavailable ({exc}). "
+                    "Retrying on the next visible CUDA device..."
+                )
 
     if last_retryable_error is not None:
         raise RuntimeError(
@@ -645,9 +652,11 @@ def preflight_check(
     require_sklearn: bool = False,
     require_fid: bool = False,
     strict_fid: bool = True,
+    validate_runtime: bool = True,
 ) -> Dict[str, Any]:
     summary = resolve_runtime_summary(cfg)
-    validate_runtime_headroom(cfg, summary)
+    if validate_runtime:
+        validate_runtime_headroom(cfg, summary)
 
     if require_sklearn:
         _import_classification_report()
@@ -1173,7 +1182,14 @@ def run_task1_pipeline(
     out_root = Path(out_root) if out_root is not None else Path(cfg.out_root) / "task1"
     seed = cfg.seed if seed is None else seed
 
-    preflight_check(cfg, data_root=data_root, require_sklearn=True, require_fid=cfg.fid_enabled, strict_fid=strict_fid)
+    preflight_check(
+        cfg,
+        data_root=data_root,
+        require_sklearn=True,
+        require_fid=cfg.fid_enabled,
+        strict_fid=strict_fid,
+        validate_runtime=False,
+    )
     _ensure_dir(out_root)
 
     all_results: list[dict[str, Any]] = []
