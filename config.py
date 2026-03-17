@@ -22,6 +22,14 @@ def _default_num_workers() -> int:
     return min(4, cpu_count // 2)
 
 
+def _cuda_mem_get_info(torch_module: Any, index: int) -> tuple[int, int]:
+    try:
+        with torch_module.cuda.device(index):
+            return torch_module.cuda.mem_get_info()
+    except Exception:
+        return torch_module.cuda.mem_get_info(index)
+
+
 def _preferred_cuda_device(torch_module: Any, preference: Literal["first", "most_free"]) -> str:
     if not torch_module.cuda.is_available():
         return "cpu"
@@ -34,13 +42,7 @@ def _preferred_cuda_device(torch_module: Any, preference: Literal["first", "most
     best_free_bytes = -1
     for index in range(device_count):
         try:
-            free_bytes, _ = torch_module.cuda.mem_get_info(index)
-        except TypeError:
-            try:
-                with torch_module.cuda.device(index):
-                    free_bytes, _ = torch_module.cuda.mem_get_info()
-            except Exception:
-                continue
+            free_bytes, _ = _cuda_mem_get_info(torch_module, index)
         except Exception:
             continue
 
@@ -91,7 +93,7 @@ class Config:
     runtime_profile: Literal["default", "m4_balanced"] = _default_runtime_profile()
     device: str = "auto"  # prefer CUDA, then MPS, then CPU
     cuda_auto_select: Literal["first", "most_free"] = "most_free"
-    cuda_min_free_gib: float = 2.0  # fail early on obviously saturated shared GPUs
+    cuda_min_free_gib: float = 4.0  # fail early on obviously saturated shared GPUs
     pin_memory: Optional[bool] = None  # auto-enable for CUDA unless explicitly overridden
     allow_tf32: bool = True
 

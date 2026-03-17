@@ -26,7 +26,7 @@ What each notebook does:
 
 - `device="auto"` prefers CUDA, then MPS, then CPU
 - On multi-GPU CUDA systems, `device="auto"` selects the visible GPU with the most free memory
-- `cuda_min_free_gib=2.0` fails early if the selected CUDA device is already too full for a new stage
+- `cuda_min_free_gib=4.0` fails early if the selected CUDA device is already too full for a new stage
 - `pin_memory` is auto-enabled on CUDA unless explicitly overridden
 - `allow_tf32=True` enables TensorFloat-32 math on CUDA for faster H100/A100-class runs
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set by default unless you already exported your own allocator config

@@ -68,6 +68,14 @@ def round_seconds(value: float) -> float:
     return rounded
 
 
+def _cuda_mem_get_info(index: int) -> tuple[int, int]:
+    try:
+        with torch.cuda.device(index):
+            return torch.cuda.mem_get_info()
+    except Exception:
+        return torch.cuda.mem_get_info(index)
+
+
 def get_visible_cuda_devices() -> list[Dict[str, Any]]:
     devices: list[Dict[str, Any]] = []
     if not torch.cuda.is_available():
@@ -79,14 +87,7 @@ def get_visible_cuda_devices() -> list[Dict[str, Any]]:
             "cuda_name": torch.cuda.get_device_name(index),
         }
         try:
-            free_bytes, total_bytes = torch.cuda.mem_get_info(index)
-        except TypeError:
-            try:
-                with torch.cuda.device(index):
-                    free_bytes, total_bytes = torch.cuda.mem_get_info()
-            except Exception:
-                devices.append(record)
-                continue
+            free_bytes, total_bytes = _cuda_mem_get_info(index)
         except Exception:
             devices.append(record)
             continue
@@ -95,6 +96,83 @@ def get_visible_cuda_devices() -> list[Dict[str, Any]]:
         record["cuda_total_gib"] = round(int(total_bytes) / (1024 ** 3), 1)
         devices.append(record)
     return devices
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
+def _is_runtime_headroom_error(exc: BaseException) -> bool:
+    return isinstance(exc, RuntimeError) and "does not have enough free memory to start this stage" in str(exc)
+
+
+def get_execution_device_candidates(cfg: Config) -> list[str]:
+    requested = cfg.device.lower()
+    visible_cuda = sorted(
+        get_visible_cuda_devices(),
+        key=lambda item: float(item.get("cuda_free_gib", -1.0)),
+        reverse=True,
+    )
+    cuda_candidates = [f"cuda:{item['cuda_index']}" for item in visible_cuda]
+
+    mps_backend = getattr(torch.backends, "mps", None)
+    mps_available = bool(mps_backend and mps_backend.is_available())
+
+    if requested == "auto":
+        if cuda_candidates:
+            return cuda_candidates
+        if mps_available:
+            return ["mps"]
+        return ["cpu"]
+
+    if requested == "cuda":
+        if cuda_candidates:
+            return cuda_candidates
+        return ["cpu"]
+
+    if requested.startswith("cuda:"):
+        return [cfg.resolve_device()]
+    if requested == "mps":
+        return ["mps" if mps_available else "cpu"]
+    return [cfg.resolve_device()]
+
+
+def run_stage_with_device_fallback(
+    cfg: Config,
+    stage_label: str,
+    stage_fn: Any,
+) -> Dict[str, Any]:
+    candidates = get_execution_device_candidates(cfg)
+    last_retryable_error: RuntimeError | None = None
+
+    for attempt_index, candidate in enumerate(candidates, start=1):
+        stage_cfg = cfg if candidate == cfg.device else cfg.with_overrides(device=candidate)
+        try:
+            device, runtime_summary = resolve_execution_device(stage_cfg)
+            return stage_fn(stage_cfg, device, runtime_summary)
+        except RuntimeError as exc:
+            clear_torch_memory()
+            can_retry = (
+                candidate.startswith("cuda")
+                and cfg.device.lower() in {"auto", "cuda"}
+                and attempt_index < len(candidates)
+                and (_is_cuda_oom(exc) or _is_runtime_headroom_error(exc))
+            )
+            if not can_retry:
+                raise
+
+            last_retryable_error = exc
+            print(
+                f"[{stage_label}] {candidate} unavailable ({exc}). "
+                "Retrying on the next visible CUDA device..."
+            )
+
+    if last_retryable_error is not None:
+        raise RuntimeError(
+            f"[{stage_label}] Exhausted visible CUDA devices after retrying {candidates}. "
+            f"Last error: {last_retryable_error}"
+        ) from last_retryable_error
+    raise RuntimeError(f"[{stage_label}] No execution devices were available.")
 
 
 def clear_torch_memory(*objects: Any) -> None:
@@ -180,12 +258,7 @@ def resolve_runtime_summary(cfg: Config, resolved_device: str | None = None) -> 
         try:
             device = torch.device(resolved_device)
             index = 0 if device.index is None else device.index
-            free_bytes = total_bytes = None
-            try:
-                free_bytes, total_bytes = torch.cuda.mem_get_info(index)
-            except TypeError:
-                with torch.cuda.device(index):
-                    free_bytes, total_bytes = torch.cuda.mem_get_info()
+            free_bytes, total_bytes = _cuda_mem_get_info(index)
 
             summary.update(
                 {
@@ -625,230 +698,235 @@ def train_gan(
     strict_fid: bool = True,
     return_models: bool = True,
 ) -> Dict[str, Any]:
-    device, runtime_summary = resolve_execution_device(cfg)
-    print(f"Device: {runtime_summary['device']}")
-    if runtime_summary.get("cuda_name"):
-        free_gib = runtime_summary.get("cuda_free_gib")
-        total_gib = runtime_summary.get("cuda_total_gib")
-        if free_gib is not None and total_gib is not None:
-            print(
-                "CUDA runtime: "
-                f"index={runtime_summary['cuda_index']} "
-                f"name={runtime_summary['cuda_name']} "
-                f"free={free_gib:.1f}GiB/{total_gib:.1f}GiB"
-            )
-        else:
-            print(
-                "CUDA runtime: "
-                f"index={runtime_summary['cuda_index']} "
-                f"name={runtime_summary['cuda_name']}"
-            )
-    print(f"Loader options: {runtime_summary['loader_options']}")
-
     data_root = Path(data_root) if data_root is not None else cfg.data_root
     fid_root = Path(fid_root) if fid_root is not None else data_root
     out_dir = Path(out_dir) if out_dir is not None else Path(cfg.out_root) / "gan"
+    def _run(stage_cfg: Config, device: torch.device, runtime_summary: Dict[str, Any]) -> Dict[str, Any]:
+        print(f"Device: {runtime_summary['device']}")
+        if runtime_summary.get("cuda_name"):
+            free_gib = runtime_summary.get("cuda_free_gib")
+            total_gib = runtime_summary.get("cuda_total_gib")
+            if free_gib is not None and total_gib is not None:
+                print(
+                    "CUDA runtime: "
+                    f"index={runtime_summary['cuda_index']} "
+                    f"name={runtime_summary['cuda_name']} "
+                    f"free={free_gib:.1f}GiB/{total_gib:.1f}GiB"
+                )
+            else:
+                print(
+                    "CUDA runtime: "
+                    f"index={runtime_summary['cuda_index']} "
+                    f"name={runtime_summary['cuda_name']}"
+                )
+        print(f"Loader options: {runtime_summary['loader_options']}")
 
-    preflight_check(cfg, data_root=data_root)
-    if cfg.fid_enabled:
-        preflight_check(
-            cfg,
-            data_root=fid_root,
-            require_fid=True,
-            strict_fid=strict_fid,
+        preflight_check(stage_cfg, data_root=data_root)
+        if stage_cfg.fid_enabled:
+            preflight_check(
+                stage_cfg,
+                data_root=fid_root,
+                require_fid=True,
+                strict_fid=strict_fid,
+            )
+
+        set_random_seeds(stage_cfg.seed)
+
+        train_loader, class_names = make_gan_loader(
+            stage_cfg,
+            split_root=data_root / "train",
+            train=True,
+            n_per_class=train_n_per_class,
+        )
+        fid_loader, fid_classes = make_gan_loader(
+            stage_cfg,
+            split_root=fid_root / stage_cfg.fid_reference_split,
+            train=False,
+            batch_size=min(stage_cfg.gan_batch, 64),
+        )
+        _validate_class_alignment(class_names, fid_classes, "FID reference split")
+
+        num_classes = len(class_names)
+        print(f"Train loader ready: {len(train_loader.dataset)} images across {num_classes} classes")
+        print(f"FID loader ready: {len(fid_loader.dataset)} images from '{stage_cfg.fid_reference_split}' split")
+
+        generator = Generator(z_dim=stage_cfg.z_dim, num_classes=num_classes).to(device)
+        discriminator = ProjectionDiscriminator(num_classes=num_classes).to(device)
+        criterion = nn.BCEWithLogitsLoss()
+        opt_g = torch.optim.Adam(generator.parameters(), lr=stage_cfg.gan_lr_g, betas=(0.5, 0.999))
+        opt_d = torch.optim.Adam(discriminator.parameters(), lr=stage_cfg.gan_lr_d, betas=(0.5, 0.999))
+        print(
+            "GAN initialized: "
+            f"batch={stage_cfg.gan_batch}, z_dim={stage_cfg.z_dim}, fid_enabled={stage_cfg.fid_enabled}, "
+            f"fid_n_samples={stage_cfg.fid_n_samples}"
         )
 
-    set_random_seeds(cfg.seed)
+        fixed_z = torch.randn(24, stage_cfg.z_dim, device=device)
+        fixed_y = torch.arange(num_classes, device=device).repeat_interleave(8)
 
-    train_loader, class_names = make_gan_loader(
-        cfg,
-        split_root=data_root / "train",
-        train=True,
-        n_per_class=train_n_per_class,
-    )
-    fid_loader, fid_classes = make_gan_loader(
-        cfg,
-        split_root=fid_root / cfg.fid_reference_split,
-        train=False,
-        batch_size=min(cfg.gan_batch, 64),
-    )
-    _validate_class_alignment(class_names, fid_classes, "FID reference split")
+        stage_out_dir = _ensure_dir(out_dir)
+        ckpt_dir = _ensure_dir(stage_out_dir / "checkpoints")
 
-    num_classes = len(class_names)
-    print(f"Train loader ready: {len(train_loader.dataset)} images across {num_classes} classes")
-    print(f"FID loader ready: {len(fid_loader.dataset)} images from '{cfg.fid_reference_split}' split")
+        fid_evaluator = (
+            FIDEvaluator(stage_cfg, fid_loader, device, strict=strict_fid) if stage_cfg.fid_enabled else None
+        )
+        train_log: list[dict[str, Any]] = []
+        best_fid = float("inf")
+        best_epoch: int | None = None
+        latest_checkpoint: Path | None = None
+        start_time = time.time()
+        print("Starting GAN training...")
 
-    generator = Generator(z_dim=cfg.z_dim, num_classes=num_classes).to(device)
-    discriminator = ProjectionDiscriminator(num_classes=num_classes).to(device)
-    criterion = nn.BCEWithLogitsLoss()
-    opt_g = torch.optim.Adam(generator.parameters(), lr=cfg.gan_lr_g, betas=(0.5, 0.999))
-    opt_d = torch.optim.Adam(discriminator.parameters(), lr=cfg.gan_lr_d, betas=(0.5, 0.999))
-    print(
-        "GAN initialized: "
-        f"batch={cfg.gan_batch}, z_dim={cfg.z_dim}, fid_enabled={cfg.fid_enabled}, "
-        f"fid_n_samples={cfg.fid_n_samples}"
-    )
+        for epoch in range(1, stage_cfg.gan_epochs + 1):
+            epoch_start = time.time()
+            d_loss_acc = 0.0
+            g_loss_acc = 0.0
+            d_x_acc = 0.0
+            d_gz_acc = 0.0
+            n_batches = 0
 
-    fixed_z = torch.randn(24, cfg.z_dim, device=device)
-    fixed_y = torch.arange(num_classes, device=device).repeat_interleave(8)
+            for real_imgs, real_labels in train_loader:
+                real_imgs = real_imgs.to(device)
+                real_labels = real_labels.to(device)
+                batch_size = real_imgs.size(0)
 
-    out_dir = _ensure_dir(out_dir)
-    ckpt_dir = _ensure_dir(out_dir / "checkpoints")
+                real_targets = torch.ones(batch_size, 1, device=device)
+                fake_targets = torch.zeros(batch_size, 1, device=device)
 
-    fid_evaluator = FIDEvaluator(cfg, fid_loader, device, strict=strict_fid) if cfg.fid_enabled else None
-    train_log: list[dict[str, Any]] = []
-    best_fid = float("inf")
-    best_epoch: int | None = None
-    latest_checkpoint: Path | None = None
-    start_time = time.time()
-    print("Starting GAN training...")
+                with torch.no_grad():
+                    z = torch.randn(batch_size, stage_cfg.z_dim, device=device)
+                    fake_imgs = generator(z, real_labels)
 
-    for epoch in range(1, cfg.gan_epochs + 1):
-        epoch_start = time.time()
-        d_loss_acc = 0.0
-        g_loss_acc = 0.0
-        d_x_acc = 0.0
-        d_gz_acc = 0.0
-        n_batches = 0
+                d_real_out = discriminator(real_imgs, real_labels)
+                d_fake_out = discriminator(fake_imgs, real_labels)
+                d_loss = criterion(d_real_out, real_targets) + criterion(d_fake_out, fake_targets)
+                opt_d.zero_grad(set_to_none=True)
+                d_loss.backward()
+                nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                opt_d.step()
 
-        for real_imgs, real_labels in train_loader:
-            real_imgs = real_imgs.to(device)
-            real_labels = real_labels.to(device)
-            batch_size = real_imgs.size(0)
+                z = torch.randn(batch_size, stage_cfg.z_dim, device=device)
+                gen_labels = torch.randint(0, num_classes, (batch_size,), device=device)
+                fake_imgs = generator(z, gen_labels)
+                g_out = discriminator(fake_imgs, gen_labels)
+                g_loss = criterion(g_out, real_targets)
+                opt_g.zero_grad(set_to_none=True)
+                g_loss.backward()
+                nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
+                opt_g.step()
 
-            real_targets = torch.ones(batch_size, 1, device=device)
-            fake_targets = torch.zeros(batch_size, 1, device=device)
+                d_loss_acc += d_loss.item()
+                g_loss_acc += g_loss.item()
+                d_x_acc += torch.sigmoid(d_real_out).mean().item()
+                d_gz_acc += torch.sigmoid(g_out).mean().item()
+                n_batches += 1
 
-            with torch.no_grad():
-                z = torch.randn(batch_size, cfg.z_dim, device=device)
-                fake_imgs = generator(z, real_labels)
-
-            d_real_out = discriminator(real_imgs, real_labels)
-            d_fake_out = discriminator(fake_imgs, real_labels)
-            d_loss = criterion(d_real_out, real_targets) + criterion(d_fake_out, fake_targets)
-            opt_d.zero_grad(set_to_none=True)
-            d_loss.backward()
-            nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
-            opt_d.step()
-
-            z = torch.randn(batch_size, cfg.z_dim, device=device)
-            gen_labels = torch.randint(0, num_classes, (batch_size,), device=device)
-            fake_imgs = generator(z, gen_labels)
-            g_out = discriminator(fake_imgs, gen_labels)
-            g_loss = criterion(g_out, real_targets)
-            opt_g.zero_grad(set_to_none=True)
-            g_loss.backward()
-            nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
-            opt_g.step()
-
-            d_loss_acc += d_loss.item()
-            g_loss_acc += g_loss.item()
-            d_x_acc += torch.sigmoid(d_real_out).mean().item()
-            d_gz_acc += torch.sigmoid(g_out).mean().item()
-            n_batches += 1
-
-        sync_device(device)
-        d_avg = d_loss_acc / max(1, n_batches)
-        g_avg = g_loss_acc / max(1, n_batches)
-        d_x_avg = d_x_acc / max(1, n_batches)
-        d_gz_avg = d_gz_acc / max(1, n_batches)
-
-        log_row: dict[str, Any] = {
-            "epoch": epoch,
-            "d_loss": d_avg,
-            "g_loss": g_avg,
-            "d_x": d_x_avg,
-            "d_gz": d_gz_avg,
-        }
-        fid_str = ""
-
-        if cfg.fid_enabled and fid_evaluator is not None and (epoch % cfg.fid_every == 0 or epoch == cfg.gan_epochs):
-            fid = fid_evaluator.compute(generator, num_classes)
             sync_device(device)
-            log_row["fid"] = fid
-            fid_str = f"  FID: {fid:.2f}"
-            if fid < best_fid:
-                best_fid = fid
-                best_epoch = epoch
-                best_path = ckpt_dir / "best_fid.pt"
+            d_avg = d_loss_acc / max(1, n_batches)
+            g_avg = g_loss_acc / max(1, n_batches)
+            d_x_avg = d_x_acc / max(1, n_batches)
+            d_gz_avg = d_gz_acc / max(1, n_batches)
+
+            log_row: dict[str, Any] = {
+                "epoch": epoch,
+                "d_loss": d_avg,
+                "g_loss": g_avg,
+                "d_x": d_x_avg,
+                "d_gz": d_gz_avg,
+            }
+            fid_str = ""
+
+            if stage_cfg.fid_enabled and fid_evaluator is not None and (
+                epoch % stage_cfg.fid_every == 0 or epoch == stage_cfg.gan_epochs
+            ):
+                fid = fid_evaluator.compute(generator, num_classes)
+                sync_device(device)
+                log_row["fid"] = fid
+                fid_str = f"  FID: {fid:.2f}"
+                if fid < best_fid:
+                    best_fid = fid
+                    best_epoch = epoch
+                    best_path = ckpt_dir / "best_fid.pt"
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "fid": fid,
+                            "class_names": class_names,
+                            "G": generator.state_dict(),
+                            "D": discriminator.state_dict(),
+                            "opt_G": opt_g.state_dict(),
+                            "opt_D": opt_d.state_dict(),
+                        },
+                        best_path,
+                    )
+                    latest_checkpoint = best_path
+
+            train_log.append(log_row)
+
+            epoch_time = time.time() - epoch_start
+            print(
+                f"[Epoch {epoch:03d}/{stage_cfg.gan_epochs}]  D_loss: {d_avg:.4f}  "
+                f"G_loss: {g_avg:.4f}  D(x): {d_x_avg:.3f}  D(G(z)): {d_gz_avg:.3f}"
+                f"  Time: {epoch_time:.1f}s{fid_str}"
+            )
+
+            if epoch % stage_cfg.sample_every == 0 or epoch == 1:
+                save_samples(generator, fixed_z, fixed_y, epoch, stage_out_dir)
+            if epoch % stage_cfg.ckpt_every == 0 or epoch == stage_cfg.gan_epochs:
+                latest_checkpoint = ckpt_dir / f"ckpt_epoch{epoch:04d}.pt"
                 torch.save(
                     {
                         "epoch": epoch,
-                        "fid": fid,
                         "class_names": class_names,
                         "G": generator.state_dict(),
                         "D": discriminator.state_dict(),
                         "opt_G": opt_g.state_dict(),
                         "opt_D": opt_d.state_dict(),
                     },
-                    best_path,
+                    latest_checkpoint,
                 )
-                latest_checkpoint = best_path
 
-        train_log.append(log_row)
+        with (stage_out_dir / "train_log.json").open("w") as f:
+            json.dump(train_log, f, indent=2)
 
-        epoch_time = time.time() - epoch_start
-        print(
-            f"[Epoch {epoch:03d}/{cfg.gan_epochs}]  D_loss: {d_avg:.4f}  "
-            f"G_loss: {g_avg:.4f}  D(x): {d_x_avg:.3f}  D(G(z)): {d_gz_avg:.3f}"
-            f"  Time: {epoch_time:.1f}s{fid_str}"
-        )
+        generator_checkpoint = ckpt_dir / "best_fid.pt"
+        if not generator_checkpoint.exists():
+            generator_checkpoint = latest_checkpoint
+        if generator_checkpoint is None:
+            raise RuntimeError("GAN training finished without producing a checkpoint.")
 
-        if epoch % cfg.sample_every == 0 or epoch == 1:
-            save_samples(generator, fixed_z, fixed_y, epoch, out_dir)
-        if epoch % cfg.ckpt_every == 0 or epoch == cfg.gan_epochs:
-            latest_checkpoint = ckpt_dir / f"ckpt_epoch{epoch:04d}.pt"
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "class_names": class_names,
-                    "G": generator.state_dict(),
-                    "D": discriminator.state_dict(),
-                    "opt_G": opt_g.state_dict(),
-                    "opt_D": opt_d.state_dict(),
-                },
-                latest_checkpoint,
+        summary = {
+            "data_root": str(data_root),
+            "fid_root": str(fid_root),
+            "fid_reference_split": stage_cfg.fid_reference_split,
+            "device": str(device),
+            "loader_options": runtime_summary["loader_options"],
+            "runtime_summary": runtime_summary,
+            "num_classes": num_classes,
+            "train_samples": len(train_loader.dataset),
+            "fid_samples": len(fid_loader.dataset),
+            "train_n_per_class": train_n_per_class,
+            "train_time_sec": round_seconds(time.time() - start_time),
+            "best_fid": None if best_fid == float("inf") else round(best_fid, 4),
+            "best_epoch": best_epoch,
+            "fid_enabled": stage_cfg.fid_enabled,
+            "generator_checkpoint": str(generator_checkpoint),
+            "out_dir": str(stage_out_dir),
+        }
+        with (stage_out_dir / "run_summary.json").open("w") as f:
+            json.dump(summary, f, indent=2)
+
+        if not return_models:
+            clear_torch_memory(
+                generator,
+                discriminator,
+                fid_evaluator._model if fid_evaluator is not None else None,
             )
+            return {"summary": summary}
 
-    with (out_dir / "train_log.json").open("w") as f:
-        json.dump(train_log, f, indent=2)
+        return {"G": generator, "D": discriminator, "summary": summary}
 
-    generator_checkpoint = ckpt_dir / "best_fid.pt"
-    if not generator_checkpoint.exists():
-        generator_checkpoint = latest_checkpoint
-    if generator_checkpoint is None:
-        raise RuntimeError("GAN training finished without producing a checkpoint.")
-
-    summary = {
-        "data_root": str(data_root),
-        "fid_root": str(fid_root),
-        "fid_reference_split": cfg.fid_reference_split,
-        "device": str(device),
-        "loader_options": runtime_summary["loader_options"],
-        "runtime_summary": runtime_summary,
-        "num_classes": num_classes,
-        "train_samples": len(train_loader.dataset),
-        "fid_samples": len(fid_loader.dataset),
-        "train_n_per_class": train_n_per_class,
-        "train_time_sec": round_seconds(time.time() - start_time),
-        "best_fid": None if best_fid == float("inf") else round(best_fid, 4),
-        "best_epoch": best_epoch,
-        "fid_enabled": cfg.fid_enabled,
-        "generator_checkpoint": str(generator_checkpoint),
-        "out_dir": str(out_dir),
-    }
-    with (out_dir / "run_summary.json").open("w") as f:
-        json.dump(summary, f, indent=2)
-
-    if not return_models:
-        clear_torch_memory(
-            generator,
-            discriminator,
-            fid_evaluator._model if fid_evaluator is not None else None,
-        )
-        return {"summary": summary}
-
-    return {"G": generator, "D": discriminator, "summary": summary}
+    return run_stage_with_device_fallback(cfg, "train_gan", _run)
 
 
 def clear_synth_dir(out_root: Path | str, class_names: Sequence[str]) -> None:
@@ -871,62 +949,65 @@ def generate_synthetic_pool(
     seed: int | None = None,
     class_names: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
-    device, runtime_summary = resolve_execution_device(cfg)
     ckpt_path = Path(checkpoint)
     out_root = Path(out_dir)
     seed = cfg.seed if seed is None else seed
 
-    preflight_check(cfg, checkpoint=ckpt_path)
-    set_random_seeds(seed)
+    def _run(stage_cfg: Config, device: torch.device, runtime_summary: Dict[str, Any]) -> Dict[str, Any]:
+        preflight_check(stage_cfg, checkpoint=ckpt_path)
+        set_random_seeds(seed)
 
-    state = _load_checkpoint(ckpt_path, torch.device("cpu"))
-    if class_names is None:
-        class_names = state.get("class_names")
-    class_names = list(class_names or ["apple", "banana", "orange"])
+        state = _load_checkpoint(ckpt_path, torch.device("cpu"))
+        resolved_class_names = class_names
+        if resolved_class_names is None:
+            resolved_class_names = state.get("class_names")
+        resolved_class_names = list(resolved_class_names or ["apple", "banana", "orange"])
 
-    generator = Generator(z_dim=cfg.z_dim, num_classes=len(class_names)).to(device)
-    generator.load_state_dict(state["G"])
-    generator.eval()
+        generator = Generator(z_dim=stage_cfg.z_dim, num_classes=len(resolved_class_names)).to(device)
+        generator.load_state_dict(state["G"])
+        generator.eval()
 
-    start_time = time.time()
-    counts: Dict[str, int] = {}
-    clear_synth_dir(out_root, class_names)
+        start_time = time.time()
+        counts: Dict[str, int] = {}
+        clear_synth_dir(out_root, resolved_class_names)
 
-    for class_index, class_name in enumerate(class_names):
-        class_dir = _ensure_dir(out_root / class_name)
-        generated = 0
-        while generated < n_per_class:
-            current_batch = min(batch_size, n_per_class - generated)
-            z = torch.randn(current_batch, cfg.z_dim, device=device)
-            y = torch.full((current_batch,), class_index, dtype=torch.long, device=device)
-            with torch.no_grad():
-                imgs = generator(z, y)
+        for class_index, class_name in enumerate(resolved_class_names):
+            class_dir = _ensure_dir(out_root / class_name)
+            generated = 0
+            while generated < n_per_class:
+                current_batch = min(batch_size, n_per_class - generated)
+                z = torch.randn(current_batch, stage_cfg.z_dim, device=device)
+                y = torch.full((current_batch,), class_index, dtype=torch.long, device=device)
+                with torch.no_grad():
+                    imgs = generator(z, y)
 
-            for i in range(current_batch):
-                save_image(
-                    imgs[i],
-                    class_dir / f"{class_name}_synth_{generated + i:05d}.png",
-                    normalize=True,
-                    value_range=(-1, 1),
-                )
-            generated += current_batch
-        counts[class_name] = generated
+                for i in range(current_batch):
+                    save_image(
+                        imgs[i],
+                        class_dir / f"{class_name}_synth_{generated + i:05d}.png",
+                        normalize=True,
+                        value_range=(-1, 1),
+                    )
+                generated += current_batch
+            counts[class_name] = generated
 
-    summary = {
-        "checkpoint": str(ckpt_path),
-        "out_dir": str(out_root),
-        "n_per_class": n_per_class,
-        "counts": counts,
-        "seed": seed,
-        "runtime_summary": runtime_summary,
-        "generate_time_sec": round_seconds(time.time() - start_time),
-    }
-    _ensure_dir(out_root)
-    with (out_root / "generation_summary.json").open("w") as f:
-        json.dump(summary, f, indent=2)
-    del state
-    clear_torch_memory(generator)
-    return summary
+        summary = {
+            "checkpoint": str(ckpt_path),
+            "out_dir": str(out_root),
+            "n_per_class": n_per_class,
+            "counts": counts,
+            "seed": seed,
+            "runtime_summary": runtime_summary,
+            "generate_time_sec": round_seconds(time.time() - start_time),
+        }
+        _ensure_dir(out_root)
+        with (out_root / "generation_summary.json").open("w") as f:
+            json.dump(summary, f, indent=2)
+        del state
+        clear_torch_memory(generator)
+        return summary
+
+    return run_stage_with_device_fallback(cfg, "generate_synthetic_pool", _run)
 
 
 def train_one_epoch(
@@ -980,91 +1061,99 @@ def run_classifier_experiment(
     extra_metadata: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     classification_report = _import_classification_report()
-    device, runtime_summary = resolve_execution_device(cfg)
 
-    preflight_check(
-        cfg,
-        real_train_root=real_train_root or (cfg.data_root / "train"),
-        test_root=test_root or (cfg.data_root / "test"),
-        synth_dir=synth_dir if scenario in {"synth", "both"} else None,
-        require_sklearn=True,
-    )
+    def _run(stage_cfg: Config, device: torch.device, runtime_summary: Dict[str, Any]) -> Dict[str, Any]:
+        preflight_check(
+            stage_cfg,
+            real_train_root=real_train_root or (stage_cfg.data_root / "train"),
+            test_root=test_root or (stage_cfg.data_root / "test"),
+            synth_dir=synth_dir if scenario in {"synth", "both"} else None,
+            require_sklearn=True,
+        )
 
-    set_random_seeds(cfg.seed)
-    train_ds, test_ds, class_names, augmentation_policy = build_classifier_datasets(
-        cfg,
-        scenario,
-        n_per_class,
-        synth_dir=synth_dir,
-        real_train_root=real_train_root,
-        test_root=test_root,
-    )
+        set_random_seeds(stage_cfg.seed)
+        train_ds, test_ds, class_names, augmentation_policy = build_classifier_datasets(
+            stage_cfg,
+            scenario,
+            n_per_class,
+            synth_dir=synth_dir,
+            real_train_root=real_train_root,
+            test_root=test_root,
+        )
 
-    loader_kwargs = cfg.loader_options()
-    train_loader = DataLoader(train_ds, batch_size=cfg.clf_batch, shuffle=True, drop_last=False, **loader_kwargs)
-    test_loader = DataLoader(test_ds, batch_size=cfg.clf_batch, shuffle=False, **loader_kwargs)
+        loader_kwargs = stage_cfg.loader_options()
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=stage_cfg.clf_batch,
+            shuffle=True,
+            drop_last=False,
+            **loader_kwargs,
+        )
+        test_loader = DataLoader(test_ds, batch_size=stage_cfg.clf_batch, shuffle=False, **loader_kwargs)
 
-    model = maybe_compile_classifier(FruitCNN(num_classes=len(class_names)).to(device), cfg)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.clf_lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.clf_epochs)
+        model = maybe_compile_classifier(FruitCNN(num_classes=len(class_names)).to(device), stage_cfg)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=stage_cfg.clf_lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=stage_cfg.clf_epochs)
 
-    print(
-        f"[{scenario}] n_per_class={n_per_class or 'all'} "
-        f"train_size={len(train_ds)} device={runtime_summary['device']}"
-    )
-    start_time = time.time()
-    for epoch in range(1, cfg.clf_epochs + 1):
-        loss, acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        scheduler.step()
-        if epoch % 10 == 0 or epoch == cfg.clf_epochs:
-            print(f"  Epoch {epoch:03d}  loss={loss:.4f}  train_acc={acc:.4f}")
-    sync_device(device)
-    train_time = time.time() - start_time
+        print(
+            f"[{scenario}] n_per_class={n_per_class or 'all'} "
+            f"train_size={len(train_ds)} device={runtime_summary['device']}"
+        )
+        start_time = time.time()
+        for epoch in range(1, stage_cfg.clf_epochs + 1):
+            loss, acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            scheduler.step()
+            if epoch % 10 == 0 or epoch == stage_cfg.clf_epochs:
+                print(f"  Epoch {epoch:03d}  loss={loss:.4f}  train_acc={acc:.4f}")
+        sync_device(device)
+        train_time = time.time() - start_time
 
-    preds, labels = evaluate(model, test_loader, device)
-    report = classification_report(labels, preds, target_names=class_names, output_dict=True, zero_division=0)
-    test_acc = float(report["accuracy"])
+        preds, labels = evaluate(model, test_loader, device)
+        report = classification_report(labels, preds, target_names=class_names, output_dict=True, zero_division=0)
+        test_acc = float(report["accuracy"])
 
-    time_breakdown = dict(time_breakdown or {})
-    gan_train_time = round_seconds(float(time_breakdown.get("gan_train_time_sec", 0.0)))
-    synth_generation_time = round_seconds(float(time_breakdown.get("synth_generation_time_sec", 0.0)))
-    pipeline_time = round_seconds(train_time + gan_train_time + synth_generation_time)
+        scenario_time_parts = dict(time_breakdown or {})
+        gan_train_time = round_seconds(float(scenario_time_parts.get("gan_train_time_sec", 0.0)))
+        synth_generation_time = round_seconds(float(scenario_time_parts.get("synth_generation_time_sec", 0.0)))
+        pipeline_time = round_seconds(train_time + gan_train_time + synth_generation_time)
 
-    result = {
-        "scenario": scenario,
-        "augmentation_policy": augmentation_policy,
-        "n_per_class": n_per_class or "all",
-        "train_size": len(train_ds),
-        "test_accuracy": round(test_acc, 4),
-        "train_time_sec": round_seconds(train_time),
-        "classifier_train_time_sec": round_seconds(train_time),
-        "gan_train_time_sec": gan_train_time,
-        "synth_generation_time_sec": synth_generation_time,
-        "pipeline_time_sec": pipeline_time,
-        "real_train_root": str(real_train_root or (cfg.data_root / "train")),
-        "test_root": str(test_root or (cfg.data_root / "test")),
-        "synth_dir": str(Path(synth_dir)),
-        "classifier_compile": cfg.classifier_compile,
-        "runtime_summary": runtime_summary,
-        "per_class": {
-            name: {
-                "precision": round(float(report[name]["precision"]), 4),
-                "recall": round(float(report[name]["recall"]), 4),
-                "f1": round(float(report[name]["f1-score"]), 4),
-            }
-            for name in class_names
-        },
-    }
-    if extra_metadata:
-        result.update(extra_metadata)
+        result = {
+            "scenario": scenario,
+            "augmentation_policy": augmentation_policy,
+            "n_per_class": n_per_class or "all",
+            "train_size": len(train_ds),
+            "test_accuracy": round(test_acc, 4),
+            "train_time_sec": round_seconds(train_time),
+            "classifier_train_time_sec": round_seconds(train_time),
+            "gan_train_time_sec": gan_train_time,
+            "synth_generation_time_sec": synth_generation_time,
+            "pipeline_time_sec": pipeline_time,
+            "real_train_root": str(real_train_root or (stage_cfg.data_root / "train")),
+            "test_root": str(test_root or (stage_cfg.data_root / "test")),
+            "synth_dir": str(Path(synth_dir)),
+            "classifier_compile": stage_cfg.classifier_compile,
+            "runtime_summary": runtime_summary,
+            "per_class": {
+                name: {
+                    "precision": round(float(report[name]["precision"]), 4),
+                    "recall": round(float(report[name]["recall"]), 4),
+                    "f1": round(float(report[name]["f1-score"]), 4),
+                }
+                for name in class_names
+            },
+        }
+        if extra_metadata:
+            result.update(extra_metadata)
 
-    out_path = _ensure_dir(Path(out_dir))
-    tag = f"{scenario}_n{n_per_class}" if n_per_class else f"{scenario}_all"
-    with (out_path / f"result_{tag}.json").open("w") as f:
-        json.dump(result, f, indent=2)
-    clear_torch_memory(model)
-    return result
+        out_path = _ensure_dir(Path(out_dir))
+        tag = f"{scenario}_n{n_per_class}" if n_per_class else f"{scenario}_all"
+        with (out_path / f"result_{tag}.json").open("w") as f:
+            json.dump(result, f, indent=2)
+        clear_torch_memory(model)
+        return result
+
+    return run_stage_with_device_fallback(cfg, "run_classifier_experiment", _run)
 
 
 def run_task1_pipeline(
