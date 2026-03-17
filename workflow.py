@@ -68,6 +68,35 @@ def round_seconds(value: float) -> float:
     return rounded
 
 
+def get_visible_cuda_devices() -> list[Dict[str, Any]]:
+    devices: list[Dict[str, Any]] = []
+    if not torch.cuda.is_available():
+        return devices
+
+    for index in range(torch.cuda.device_count()):
+        record: Dict[str, Any] = {
+            "cuda_index": index,
+            "cuda_name": torch.cuda.get_device_name(index),
+        }
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+        except TypeError:
+            try:
+                with torch.cuda.device(index):
+                    free_bytes, total_bytes = torch.cuda.mem_get_info()
+            except Exception:
+                devices.append(record)
+                continue
+        except Exception:
+            devices.append(record)
+            continue
+
+        record["cuda_free_gib"] = round(int(free_bytes) / (1024 ** 3), 1)
+        record["cuda_total_gib"] = round(int(total_bytes) / (1024 ** 3), 1)
+        devices.append(record)
+    return devices
+
+
 def clear_torch_memory(*objects: Any) -> None:
     for obj in objects:
         if isinstance(obj, nn.Module):
@@ -94,6 +123,14 @@ def validate_runtime_headroom(cfg: Config, runtime_summary: Mapping[str, Any]) -
     if float(free_gib) >= min_free_gib:
         return
 
+    visible_devices = get_visible_cuda_devices()
+    visible_summary = ", ".join(
+        (
+            f"cuda:{item['cuda_index']}="
+            f"{item.get('cuda_free_gib', '?')}/{item.get('cuda_total_gib', '?')}GiB"
+        )
+        for item in visible_devices
+    )
     advice = [
         "free memory on the selected GPU",
         "lower `gan_batch` / `clf_batch`",
@@ -102,6 +139,9 @@ def validate_runtime_headroom(cfg: Config, runtime_summary: Mapping[str, Any]) -
     requested = cfg.device.lower()
     if requested.startswith("cuda:"):
         advice.insert(0, 'set `DEVICE_OVERRIDE="auto"` or choose a roomier GPU such as `cuda:0`')
+    elif requested == "auto":
+        advice.insert(0, "wait for one of the visible GPUs to free memory")
+        advice.insert(1, "lower `CUDA_MIN_FREE_GIB_OVERRIDE` in the notebook if you want a riskier start threshold")
     elif torch.cuda.device_count() > 1:
         advice.insert(0, 'leave `device="auto"` so the runtime can pick the roomiest visible GPU')
 
@@ -109,7 +149,9 @@ def validate_runtime_headroom(cfg: Config, runtime_summary: Mapping[str, Any]) -
         "Selected CUDA device does not have enough free memory to start this stage. "
         f"requested={cfg.device!r}, resolved={resolved_device}, "
         f"free={float(free_gib):.1f}GiB/{float(total_gib):.1f}GiB, "
-        f"required>={min_free_gib:.1f}GiB. Next steps: {'; '.join(advice)}."
+        f"required>={min_free_gib:.1f}GiB. "
+        f"Visible GPUs: {visible_summary or 'unavailable'}. "
+        f"Next steps: {'; '.join(advice)}."
     )
 
 
@@ -130,6 +172,9 @@ def resolve_runtime_summary(cfg: Config, resolved_device: str | None = None) -> 
         "loader_options": cfg.loader_options(),
         "allow_tf32": cfg.allow_tf32,
     }
+    visible_devices = get_visible_cuda_devices()
+    if visible_devices:
+        summary["visible_cuda_devices"] = visible_devices
 
     if resolved_device.startswith("cuda"):
         try:

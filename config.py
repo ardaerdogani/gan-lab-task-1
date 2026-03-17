@@ -91,7 +91,7 @@ class Config:
     runtime_profile: Literal["default", "m4_balanced"] = _default_runtime_profile()
     device: str = "auto"  # prefer CUDA, then MPS, then CPU
     cuda_auto_select: Literal["first", "most_free"] = "most_free"
-    cuda_min_free_gib: float = 4.0  # fail early on saturated shared GPUs
+    cuda_min_free_gib: float = 2.0  # fail early on obviously saturated shared GPUs
     pin_memory: Optional[bool] = None  # auto-enable for CUDA unless explicitly overridden
     allow_tf32: bool = True
 
