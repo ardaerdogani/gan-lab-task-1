@@ -61,7 +61,7 @@ class Generator(nn.Module):
         )
 
     def forward(self, z: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        h = self.fc(z).view(z.size(0), -1, 4, 4)
+        h = self.fc(z).reshape(z.size(0), -1, 4, 4)
         h = self.block1(h, y)
         h = self.block2(h, y)
         h = self.block3(h, y)

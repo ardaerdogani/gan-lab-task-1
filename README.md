@@ -1,12 +1,12 @@
 # Synthetic Data Generation with CGANs for Fruit Classification
 
-This repository evaluates whether a conditional GAN can generate useful synthetic fruit images for downstream classification when real labeled data are limited.
+This repository studies whether a conditional GAN can generate useful synthetic fruit images for downstream classification when real labeled data are limited.
 
-The project is notebook-first, and the workflow now runs through four sequential notebooks.
+The project stays notebook-first, but the runtime logic now lives in `workflow.py`. The notebooks are thin entrypoints over the shared training, generation, evaluation, and Task 1 pipeline code.
 
-## Notebook Workflows
+## Notebook Workflow
 
-Use this when you want step-by-step control:
+Use the notebooks in this order:
 
 1. `notebooks/01_data_setup_and_train_gan.ipynb`
 2. `notebooks/02_generate_synthetic_data_and_classifier_experiments.ipynb`
@@ -15,30 +15,50 @@ Use this when you want step-by-step control:
 
 What each notebook does:
 
-- `01_data_setup_and_train_gan.ipynb`: inspect dataset structure, preview real images, and train one GAN run
-- `02_generate_synthetic_data_and_classifier_experiments.ipynb`: generate one synthetic dataset from a checkpoint and then run one classifier setup or a small grid
-- `03_task1_results_and_analysis.ipynb`: analyze saved results and generate plots
-- `04_report_exports.ipynb`: export report tables and generate the FID SVG figure
+- `01_data_setup_and_train_gan.ipynb`: dataset sanity checks, sample previews, and one standalone GAN run in `runs/gan/`
+- `02_generate_synthetic_data_and_classifier_experiments.ipynb`: the authoritative Task 1 runner that writes standardized outputs to `runs/task1/`
+- `03_task1_results_and_analysis.ipynb`: loads `runs/task1/` outputs and generates summary tables and plots
+- `04_report_exports.ipynb`: exports CSV tables and optional SVG figures from the saved Task 1 outputs
 
-Notes:
+## Runtime Defaults
 
-- `04_report_exports.ipynb` is optional if you only need analysis outputs and not export artifacts
+`Config` keeps notebook defaults conservative, but the runtime is now aware of shared CUDA hosts:
 
-## Task 1 Coverage
+- `device="auto"` prefers CUDA, then MPS, then CPU
+- On multi-GPU CUDA systems, `device="auto"` selects the visible GPU with the most free memory
+- `pin_memory` is auto-enabled on CUDA unless explicitly overridden
+- `allow_tf32=True` enables TensorFloat-32 math on CUDA for faster H100/A100-class runs
+- `runtime_profile="m4_balanced"` is only applied automatically on Apple silicon
+- `gan_batch=80`
+- `clf_batch=64`
+- `sample_every=25`
+- `fid_every=25`
+- `classifier_compile=False`
 
-The Task 1 workflow supports:
+FID is enabled by default, uses the `train` split as the reference split, and validates the reference sample count before long runs start.
 
-- retraining the GAN separately for each data budget
-- generating the synthetic pool from the matching real-data budget
-- evaluating `real`, `synth`, and `both` without classical augmentation
-- keeping `real_aug` as the optional non-generative baseline
-- tracking classifier-only time and full pipeline time
+## Task 1 Outputs
+
+The shared workflow writes Task 1 artifacts to:
+
+- `runs/task1/gan/n*/...`
+- `runs/task1/synth/n*/...`
+- `runs/task1/clf/all_results.json`
+- `runs/task1/pipeline_summary.json`
+- `runs/task1/clf/plots/*.png`
+
+Standalone GAN runs from notebook 01 still write to:
+
+- `runs/gan/train_log.json`
+- `runs/gan/checkpoints/*.pt`
+- `runs/gan/samples_epoch*.png`
 
 ## Repository Structure
 
 ```text
-gan-lab/
+gan-lab-task-1/
 ├── config.py
+├── workflow.py
 ├── models/
 │   ├── gan.py
 │   └── classifier.py
@@ -49,19 +69,18 @@ gan-lab/
 │   ├── 04_report_exports.ipynb
 │   └── README.md
 ├── data_final/
-├── data_splits/
 └── requirements.txt
 ```
 
-Generated locally but not committed:
+Generated artifacts are local-only:
 
 - `runs/`
-- `data_synth/`
 - `reports/`
+- `data_synth/`
 
 ## Dataset
 
-The project uses a 3-class fruit dataset in `ImageFolder` format:
+The dataset is a 3-class `ImageFolder` tree:
 
 ```text
 data_final/
@@ -76,64 +95,52 @@ Classes:
 - `banana`
 - `orange`
 
-## Models
-
-- GAN: conditional generator plus projection discriminator
-- Classifier: compact CNN (`FruitCNN`)
-- Image size: resized to `64x64` for model training
-
-Important defaults live in `config.py`, including:
-
-- latent dimension
-- GAN epochs and batch size
-- classifier epochs and batch size
-- optimizer settings
-- device selection
-
 ## Setup
 
-Install dependencies from `requirements.txt`:
+### Current H100 / CUDA 12.7 System
+
+For the current shared system with NVIDIA H100 NVL GPUs and driver `565.57.01`, install a CUDA-enabled PyTorch build first, then the base project dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+python -m pip install -r requirements.txt
+python -m pip install jupyterlab ipykernel
+python -m ipykernel install --user --name gan-lab-task-1 --display-name "Python (gan-lab-task-1)"
+```
+
+Why `cu126`: it is a good fit for a CUDA 12.7 driver stack while staying on the official current PyTorch wheel path.
+
+On this host, leaving `device="auto"` is usually enough. If you want to pin a specific GPU from the notebooks, set:
+
+```python
+cfg = cfg.with_overrides(device="cuda:0")
+```
+
+or
+
+```python
+cfg = cfg.with_overrides(device="cuda:1")
+```
+
+### Generic Install
+
+Install PyTorch for your platform using the matching official command first, then install the base dependencies:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Notes:
-
-- `Config` now resolves device automatically in the order `cuda -> mps -> cpu`
-- for notebook use, install a notebook environment separately if needed, for example `jupyterlab` and `ipykernel`
-
-## Generated Outputs
-
-Running the notebooks can create:
-
-- `data_splits/task1/n*/train/...`
-- `runs/task1/gan/n*/...`
-- `runs/task1/synth/n*/...`
-- `runs/task1/clf/all_results.json`
-- `runs/task1/pipeline_summary.json`
-- `runs/task1/clf/plots/*.png`
-- `reports/tables/*.csv`
-- `reports/figures/fid_vs_epoch.svg`
-
-The standalone GAN notebook may also write:
-
-- `runs/gan/train_log.json`
-- `runs/gan/checkpoints/*.pt`
-- `runs/gan/samples_epoch*.png`
-
-## Remaining Python Files
-
-The remaining `.py` files are shared code without notebook duplicates:
-
-- `config.py`
-- `models/gan.py`
-- `models/classifier.py`
+For notebook use, install a notebook environment if needed, for example `jupyterlab` and `ipykernel`.
 
 ## Notes
 
-- The correct notebook extension is `.ipynb`
-- Each notebook resets the working directory to the repo root
-- Generated outputs are intentionally ignored by Git to keep the repository clean between runs
+- Each notebook resets the working directory to the repo root.
+- The notebooks now depend on the shared `workflow.py` module instead of redefining training loops inline.
+- Notebook metadata now uses the generic `python3` kernel name so a local `ipykernel` works without a machine-specific `gan` kernel.
+- Dependency checks happen early, so missing packages like `scikit-learn` fail in preflight instead of halfway through a long run.
