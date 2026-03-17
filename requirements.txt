@@ -1,7 +1,6 @@
-# Base dependencies only.
-# Install PyTorch separately so shared CUDA hosts can use the matching wheel,
-# for example:
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+# Base project dependencies.
+# Install PyTorch for your local machine first, for example:
+#   pip install torch torchvision
 numpy
 scipy
 scikit-learn
