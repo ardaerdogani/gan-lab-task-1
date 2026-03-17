@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import json
+import os
 import random
 import time
 import warnings
@@ -11,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Sequence
 
 import numpy as np
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 import torch.nn as nn
 from scipy import linalg
@@ -63,6 +66,61 @@ def round_seconds(value: float) -> float:
     if value > 0 and rounded == 0.0:
         return 0.1
     return rounded
+
+
+def clear_torch_memory(*objects: Any) -> None:
+    for obj in objects:
+        if isinstance(obj, nn.Module):
+            try:
+                obj.to("cpu")
+            except Exception:
+                pass
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def validate_runtime_headroom(cfg: Config, runtime_summary: Mapping[str, Any]) -> None:
+    resolved_device = str(runtime_summary.get("device", "cpu"))
+    if not resolved_device.startswith("cuda"):
+        return
+
+    free_gib = runtime_summary.get("cuda_free_gib")
+    total_gib = runtime_summary.get("cuda_total_gib")
+    if free_gib is None or total_gib is None:
+        return
+
+    min_free_gib = float(cfg.cuda_min_free_gib)
+    if float(free_gib) >= min_free_gib:
+        return
+
+    advice = [
+        "free memory on the selected GPU",
+        "lower `gan_batch` / `clf_batch`",
+        "restart the notebook kernel after switching devices",
+    ]
+    requested = cfg.device.lower()
+    if requested.startswith("cuda:"):
+        advice.insert(0, 'set `DEVICE_OVERRIDE="auto"` or choose a roomier GPU such as `cuda:0`')
+    elif torch.cuda.device_count() > 1:
+        advice.insert(0, 'leave `device="auto"` so the runtime can pick the roomiest visible GPU')
+
+    raise RuntimeError(
+        "Selected CUDA device does not have enough free memory to start this stage. "
+        f"requested={cfg.device!r}, resolved={resolved_device}, "
+        f"free={float(free_gib):.1f}GiB/{float(total_gib):.1f}GiB, "
+        f"required>={min_free_gib:.1f}GiB. Next steps: {'; '.join(advice)}."
+    )
+
+
+def resolve_execution_device(cfg: Config) -> tuple[torch.device, Dict[str, Any]]:
+    clear_torch_memory()
+    resolved_device = cfg.resolve_device()
+    runtime_summary = resolve_runtime_summary(cfg, resolved_device=resolved_device)
+    validate_runtime_headroom(cfg, runtime_summary)
+    device = torch.device(runtime_summary["device"])
+    configure_device_runtime(cfg, device)
+    return device, runtime_summary
 
 
 def resolve_runtime_summary(cfg: Config, resolved_device: str | None = None) -> Dict[str, Any]:
@@ -471,6 +529,7 @@ def preflight_check(
     strict_fid: bool = True,
 ) -> Dict[str, Any]:
     summary = resolve_runtime_summary(cfg)
+    validate_runtime_headroom(cfg, summary)
 
     if require_sklearn:
         _import_classification_report()
@@ -519,10 +578,9 @@ def train_gan(
     out_dir: Path | str | None = None,
     train_n_per_class: int | None = None,
     strict_fid: bool = True,
+    return_models: bool = True,
 ) -> Dict[str, Any]:
-    device = torch.device(cfg.resolve_device())
-    configure_device_runtime(cfg, device)
-    runtime_summary = resolve_runtime_summary(cfg, resolved_device=str(device))
+    device, runtime_summary = resolve_execution_device(cfg)
     print(f"Device: {runtime_summary['device']}")
     if runtime_summary.get("cuda_name"):
         free_gib = runtime_summary.get("cuda_free_gib")
@@ -737,6 +795,14 @@ def train_gan(
     with (out_dir / "run_summary.json").open("w") as f:
         json.dump(summary, f, indent=2)
 
+    if not return_models:
+        clear_torch_memory(
+            generator,
+            discriminator,
+            fid_evaluator._model if fid_evaluator is not None else None,
+        )
+        return {"summary": summary}
+
     return {"G": generator, "D": discriminator, "summary": summary}
 
 
@@ -760,8 +826,7 @@ def generate_synthetic_pool(
     seed: int | None = None,
     class_names: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
-    device = torch.device(cfg.resolve_device())
-    configure_device_runtime(cfg, device)
+    device, runtime_summary = resolve_execution_device(cfg)
     ckpt_path = Path(checkpoint)
     out_root = Path(out_dir)
     seed = cfg.seed if seed is None else seed
@@ -769,7 +834,7 @@ def generate_synthetic_pool(
     preflight_check(cfg, checkpoint=ckpt_path)
     set_random_seeds(seed)
 
-    state = _load_checkpoint(ckpt_path, device)
+    state = _load_checkpoint(ckpt_path, torch.device("cpu"))
     if class_names is None:
         class_names = state.get("class_names")
     class_names = list(class_names or ["apple", "banana", "orange"])
@@ -808,11 +873,14 @@ def generate_synthetic_pool(
         "n_per_class": n_per_class,
         "counts": counts,
         "seed": seed,
+        "runtime_summary": runtime_summary,
         "generate_time_sec": round_seconds(time.time() - start_time),
     }
     _ensure_dir(out_root)
     with (out_root / "generation_summary.json").open("w") as f:
         json.dump(summary, f, indent=2)
+    del state
+    clear_torch_memory(generator)
     return summary
 
 
@@ -867,9 +935,7 @@ def run_classifier_experiment(
     extra_metadata: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     classification_report = _import_classification_report()
-    device = torch.device(cfg.resolve_device())
-    configure_device_runtime(cfg, device)
-    runtime_summary = resolve_runtime_summary(cfg, resolved_device=str(device))
+    device, runtime_summary = resolve_execution_device(cfg)
 
     preflight_check(
         cfg,
@@ -952,6 +1018,7 @@ def run_classifier_experiment(
     tag = f"{scenario}_n{n_per_class}" if n_per_class else f"{scenario}_all"
     with (out_path / f"result_{tag}.json").open("w") as f:
         json.dump(result, f, indent=2)
+    clear_torch_memory(model)
     return result
 
 
@@ -990,6 +1057,7 @@ def run_task1_pipeline(
             out_dir=gan_out_dir,
             train_n_per_class=n_per_class,
             strict_fid=strict_fid,
+            return_models=False,
         )
         gan_summary = gan_run["summary"]
         generation_summary = generate_synthetic_pool(
@@ -1029,6 +1097,7 @@ def run_task1_pipeline(
                 },
             )
             all_results.append(result)
+        clear_torch_memory()
 
     with (clf_out_dir / "all_results.json").open("w") as f:
         json.dump(all_results, f, indent=2)

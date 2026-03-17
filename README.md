@@ -26,8 +26,10 @@ What each notebook does:
 
 - `device="auto"` prefers CUDA, then MPS, then CPU
 - On multi-GPU CUDA systems, `device="auto"` selects the visible GPU with the most free memory
+- `cuda_min_free_gib=4.0` fails early if the selected CUDA device is already too full for a new stage
 - `pin_memory` is auto-enabled on CUDA unless explicitly overridden
 - `allow_tf32=True` enables TensorFloat-32 math on CUDA for faster H100/A100-class runs
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set by default unless you already exported your own allocator config
 - `runtime_profile="m4_balanced"` is only applied automatically on Apple silicon
 - `gan_batch=80`
 - `clf_batch=64`
@@ -124,6 +126,8 @@ or
 ```python
 cfg = cfg.with_overrides(device="cuda:1")
 ```
+
+If you hit a shared-GPU OOM on a pinned device, switch back to `device="auto"` or choose the roomier GPU, then restart the notebook kernel before rerunning the training cell.
 
 ### Generic Install
 
